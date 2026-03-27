@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ensure labels and issues
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const labels = [
@@ -394,6 +394,15 @@ jobs:
 
             for (const label of labels) {
               await ensureLabel(label);
+            }
+
+            const repoInfo = await github.rest.repos.get({ owner, repo });
+            if (!repoInfo.data.has_issues) {
+              core.warning(
+                "GitHub Issues are disabled for this repository. " +
+                "Enable Issues in repository settings, then rerun this workflow."
+              );
+              return;
             }
 
             const existing = await allIssues();
