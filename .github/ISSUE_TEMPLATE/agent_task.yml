@@ -25,6 +25,15 @@ body:
       required: true
 
   - type: textarea
+    id: autonomy_fit
+    attributes:
+      label: Why this is suitable for autonomous implementation
+      description: Explain why the task is bounded, low-ambiguity, and safe for branch-level agent work.
+      placeholder: The change is local to the CLI and tests, acceptance criteria are explicit, and no rule semantics or repo settings change is involved.
+    validations:
+      required: true
+
+  - type: textarea
     id: likely_paths
     attributes:
       label: Files likely affected
@@ -42,6 +51,18 @@ body:
       description: State what tests must be added or updated for this issue.
       placeholder: |
         - Update CLI coverage in tests/test_cli.py.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context_bundle
+    attributes:
+      label: Context bundle
+      description: Link the most relevant docs, tests, fixtures, schemas, or prior issues for grounding.
+      placeholder: |
+        - docs/requirements.md
+        - tests/test_cli.py
+        - fixtures/states/classic_initial.json
     validations:
       required: true
 

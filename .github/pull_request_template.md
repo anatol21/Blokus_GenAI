@@ -22,6 +22,7 @@
 - [ ] Test changes
 - [ ] Documentation changes
 - [ ] Schema/contract changes
+- [ ] Dependency changes
 
 ## Acceptance coverage
 
@@ -37,6 +38,13 @@
 - [ ] `./scripts/evaluate.sh` (if applicable)
 - [ ] CLI/manual checks (if applicable)
 - [ ] Other validation:
+
+## Security and supply chain
+
+- [ ] Dependency changes present: yes / no
+- [ ] Dependency review passed or was not applicable
+- [ ] No secret material introduced
+- [ ] No new third-party GitHub Action was added without human review
 
 ## Ambiguity and assumptions
 

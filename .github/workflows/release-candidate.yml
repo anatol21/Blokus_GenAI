@@ -17,11 +17,13 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   metadata:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       release_name: ${{ steps.meta.outputs.release_name }}
@@ -75,6 +77,8 @@ jobs:
   verify-main:
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -97,6 +101,10 @@ jobs:
     needs:
       - metadata
       - verify-main
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -110,6 +118,15 @@ jobs:
           RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
           ARCHIVE_NAME: ${{ needs.metadata.outputs.archive_name }}
         run: ./scripts/package_release.sh
+      - name: Generate provenance attestation
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/${{ needs.metadata.outputs.archive_name }}
+      - name: Normalize provenance bundle name
+        run: |
+          mkdir -p dist/provenance
+          cp "${{ steps.attest.outputs.bundle-path }}" "dist/provenance/${{ needs.metadata.outputs.release_tag }}-provenance.jsonl"
       - name: Upload release candidate artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -118,10 +135,20 @@ jobs:
             dist/release-candidate/
             dist/${{ needs.metadata.outputs.archive_name }}
           if-no-files-found: error
+          retention-days: 90
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-provenance-${{ needs.metadata.outputs.release_tag }}
+          path: dist/provenance/
+          if-no-files-found: error
+          retention-days: 90
 
   release-notes:
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: write
     steps:
       - name: Generate release notes preview
         env:
@@ -157,12 +184,14 @@ jobs:
           name: release-notes-${{ needs.metadata.outputs.release_tag }}
           path: dist/release-notes/
           if-no-files-found: error
+          retention-days: 90
 
   rc-approval:
     runs-on: ubuntu-latest
     needs:
       - package
       - release-notes
+    permissions: {}
     environment:
       name: rc
     steps:
@@ -176,12 +205,19 @@ jobs:
       - release-notes
       - rc-approval
     if: needs.metadata.outputs.publish_release == 'true'
+    permissions:
+      contents: write
     steps:
       - name: Download release candidate artifact
         uses: actions/download-artifact@v4
         with:
           name: release-candidate-${{ needs.metadata.outputs.release_tag }}
           path: dist/release-assets
+      - name: Download provenance artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-provenance-${{ needs.metadata.outputs.release_tag }}
+          path: dist/provenance
       - name: Download release notes artifact
         uses: actions/download-artifact@v4
         with:
@@ -197,11 +233,13 @@ jobs:
           ARCHIVE_PATH="dist/release-assets/${ARCHIVE_NAME}"
           EVIDENCE_PATH="dist/release-assets/release-candidate/evidence-delta.md"
           NOTES_PATH="dist/release-notes/release-notes.md"
+          PROVENANCE_PATH="dist/provenance/${RELEASE_TAG}-provenance.jsonl"
 
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" \
               "${ARCHIVE_PATH}" \
               "${EVIDENCE_PATH}" \
+              "${PROVENANCE_PATH}#${RELEASE_TAG}-provenance.jsonl" \
               "${NOTES_PATH}#release-notes.md" \
               --clobber
             gh release edit "${RELEASE_TAG}" \
@@ -212,6 +250,7 @@ jobs:
             gh release create "${RELEASE_TAG}" \
               "${ARCHIVE_PATH}" \
               "${EVIDENCE_PATH}" \
+              "${PROVENANCE_PATH}#${RELEASE_TAG}-provenance.jsonl" \
               "${NOTES_PATH}#release-notes.md" \
               --title "${RELEASE_NAME}" \
               --notes-file "${NOTES_PATH}" \

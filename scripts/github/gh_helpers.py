@@ -66,6 +66,20 @@ class GitHubClient:
         jobs = self.paginate(f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100")
         return [job for item in jobs for job in item.get("jobs", [item]) if isinstance(item, dict)]
 
+    def list_workflow_runs(self, workflow_file: str, *, per_page: int = 20) -> list[dict[str, Any]]:
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repository}/actions/workflows/{quote(workflow_file, safe='')}/runs?per_page={per_page}",
+        )
+        return payload.get("workflow_runs", []) if isinstance(payload, dict) else []
+
+    def list_artifacts(self, *, per_page: int = 100) -> list[dict[str, Any]]:
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repository}/actions/artifacts?per_page={per_page}",
+        )
+        return payload.get("artifacts", []) if isinstance(payload, dict) else []
+
     def add_labels(self, issue_number: int, labels: list[str]) -> None:
         if not labels:
             return

@@ -11,7 +11,9 @@ An issue is agent-ready only when all of the following are true:
 - the issue uses the structured agent or bug form
 - the problem statement is specific
 - acceptance criteria are explicit
+- the issue explains why the task is suitable for bounded autonomous implementation
 - required tests are named
+- a short context bundle links the most relevant docs, tests, fixtures, or schemas
 - rule ambiguity is marked `no ambiguity`
 - the work does not require repository settings, secrets, or protected-environment authority
 
@@ -34,6 +36,7 @@ The agent may not:
 - merge to `main`
 - approve protected environments
 - change branch protections, secrets, repository settings, or environment configuration
+- introduce a new third-party GitHub Action without explicit human review
 - invent game-rule semantics when requirements are ambiguous
 - widen scope beyond the linked issue without escalation
 - autonomously repair workflow-sensitive changes under `.github/`
@@ -69,6 +72,8 @@ The following areas are treated as sensitive for autonomous repair:
 - `OWNERSHIP.md`
 - `TEAM_SUMMARY.md`
 - `docs/AGENT_POLICY.md`
+- `docs/INCIDENT_RESPONSE.md`
+- `docs/PIPELINE_SECURITY.md`
 
 Agents may help draft changes in these areas when humans ask for them, but the bounded repair loop does not patch them automatically.
 
@@ -94,6 +99,17 @@ Current bounded actions:
 - `unit-test`, `cli-smoke`, `fixture-schema`: rerun failed CI jobs inside the retry budget
 - `evaluate`, `environment`, and `unknown`: escalate immediately
 
+## Secret Handling
+
+Agents and automation must treat secrets as out of bounds:
+
+- never commit credentials, tokens, keys, or copied secret values
+- never echo secret values into workflow logs, PR comments, or release notes
+- never create or rotate repository, organization, or environment secrets
+- keep publication-specific secrets scoped to `rc` or `submission` environments when they are needed at all
+
+Every PR should explicitly confirm that no secret material was introduced.
+
 ## Escalation Policy
 
 Autonomy must stop and route back to humans when any of the following are true:
@@ -112,6 +128,41 @@ When escalation happens, workflows should:
 - add `needs-review`
 - remove or avoid `repair-loop`
 - post a comment that explains why autonomy stopped
+
+## Task Suitability Rubric
+
+Good for agent:
+
+- CLI polish and deterministic output cleanup
+- targeted bug fixes with concrete reproductions
+- test expansion, fixture maintenance, and documentation updates
+- local refactors that preserve explicit behavior
+
+Good for agent with review:
+
+- schema or fixture contract changes with clear acceptance criteria
+- release-note, evidence, or packaging improvements that stay inside existing trust boundaries
+- workflow-documentation changes that do not alter permissions or approval gates
+
+Human-led only:
+
+- rule-semantics changes or ambiguity resolution
+- branch protection, environment, secret, or repository-setting changes
+- CI workflow permission changes and new third-party action introductions
+- work that widens scope beyond the linked issue or crosses multiple governance boundaries
+
+## Context Hygiene
+
+Every agent task packet should include:
+
+- issue summary
+- acceptance criteria
+- likely files affected
+- required tests
+- ambiguity status
+- a short context bundle with the most relevant docs, tests, fixtures, schemas, or prior issues
+
+More context is not always better. Prefer a small, relevant bundle over a long dump of repository history.
 
 ## Human Approval Boundaries
 

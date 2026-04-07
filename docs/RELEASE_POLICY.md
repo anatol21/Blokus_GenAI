@@ -17,6 +17,7 @@ The workflow must:
 
 - verify the merged code with install, test, CLI smoke, fixture/schema validation, and evaluation
 - build the release-candidate artifact bundle
+- generate an artifact attestation for the release archive
 - generate release notes and an evidence delta
 - upload artifacts for review before any release publication happens
 
@@ -36,7 +37,7 @@ After `rc` approval, the workflow may create or update a GitHub pre-release:
 
 - tag scheme: `v<version>-rc.<n>` unless a manual override is supplied
 - release type: GitHub pre-release
-- assets: packaged archive plus evidence-oriented artifacts
+- assets: packaged archive, provenance bundle, and evidence-oriented artifacts
 - notes: generated automatically through GitHub release-note generation
 
 ## Submission Promotion
@@ -68,6 +69,7 @@ Release publication must stop when any of the following are true:
 - evidence or release metadata cannot be generated
 - the environment gate is not approved
 - the final release tag would be ambiguous and no human override is provided
+- the provenance attestation cannot be generated for the packaged archive
 
 ## Failure Handling And Reruns
 
@@ -81,6 +83,17 @@ Release publication must stop when any of the following are true:
 Before approving `rc` or `submission`, reviewers should confirm:
 
 - the archive exists and opens correctly
+- the provenance bundle or attestation record exists for the release archive
 - the evidence delta matches the expected merged change set
 - the evaluation summary is present and successful
 - any docs, fixtures, schemas, or CI-sensitive changes are visible and intentional
+
+## Retention Policy
+
+The repository uses focused retention windows instead of keeping every artifact indefinitely:
+
+- CI debug artifacts: `14` days
+- governance review reports: `30` days
+- release-candidate and submission artifacts: `90` days
+
+If repository-level artifact and log retention is adjusted later in GitHub settings, it should stay aligned with these workflow-level values and any course audit needs.

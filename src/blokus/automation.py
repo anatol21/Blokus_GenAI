@@ -24,6 +24,8 @@ SENSITIVE_PATHS = {
     "OWNERSHIP.md",
     "TEAM_SUMMARY.md",
     "docs/AGENT_POLICY.md",
+    "docs/INCIDENT_RESPONSE.md",
+    "docs/PIPELINE_SECURITY.md",
 }
 
 _SECTION_RE = re.compile(r"^###\s+(.+?)\s*$", re.MULTILINE)
@@ -185,8 +187,21 @@ def triage_issue(title: str, body: str, labels: Iterable[str]) -> dict[str, obje
     workflow_sensitive = any(is_sensitive_path(path) for path in likely_paths) or "ci" in domain_labels
 
     required_sections = {
-        "agent-task": ("problem statement", "acceptance criteria", "required tests"),
-        "bug-report": ("what broke", "reproduction steps", "expected behavior", "required tests"),
+        "agent-task": (
+            "problem statement",
+            "acceptance criteria",
+            "why this is suitable for autonomous implementation",
+            "required tests",
+            "context bundle",
+        ),
+        "bug-report": (
+            "what broke",
+            "reproduction steps",
+            "expected behavior",
+            "why this is suitable for autonomous implementation",
+            "required tests",
+            "context bundle",
+        ),
         "rule-ambiguity": ("ambiguity or decision needed", "why this blocks implementation"),
     }.get(kind, ())
     missing_sections = [

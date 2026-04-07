@@ -50,6 +50,7 @@ jobs:
           name: test-debug
           path: artifacts/ci/test
           if-no-files-found: ignore
+          retention-days: 14
 
   cli-smoke:
     name: cli-smoke
@@ -72,6 +73,7 @@ jobs:
           name: cli-debug
           path: artifacts/ci/cli
           if-no-files-found: ignore
+          retention-days: 14
 
   fixture-schema:
     name: fixture-schema
@@ -94,6 +96,7 @@ jobs:
           name: fixture-schema-debug
           path: artifacts/ci/fixture-schema
           if-no-files-found: ignore
+          retention-days: 14
 
   evaluate:
     name: evaluate
@@ -119,3 +122,4 @@ jobs:
           name: evaluate-debug
           path: artifacts/ci/evaluate
           if-no-files-found: ignore
+          retention-days: 14

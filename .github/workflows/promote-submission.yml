@@ -13,11 +13,13 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   metadata:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       release_tag: ${{ steps.meta.outputs.release_tag }}
       final_tag: ${{ steps.meta.outputs.final_tag }}
@@ -67,10 +69,13 @@ jobs:
           name: submission-metadata-${{ steps.meta.outputs.release_tag }}
           path: dist/submission/release-body.md
           if-no-files-found: error
+          retention-days: 90
 
   fetch-rc:
     runs-on: ubuntu-latest
     needs: metadata
+    permissions:
+      contents: read
     steps:
       - name: Download RC assets from GitHub Release
         env:
@@ -105,12 +110,14 @@ jobs:
           name: submission-candidate-${{ needs.metadata.outputs.release_tag }}
           path: dist/submission/
           if-no-files-found: error
+          retention-days: 90
 
   submission-approval:
     runs-on: ubuntu-latest
     needs:
       - metadata
       - fetch-rc
+    permissions: {}
     environment:
       name: submission
     steps:
@@ -122,6 +129,8 @@ jobs:
       - metadata
       - fetch-rc
       - submission-approval
+    permissions:
+      contents: write
     steps:
       - name: Download submission candidate artifact
         uses: actions/download-artifact@v4

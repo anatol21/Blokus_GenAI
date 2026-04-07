@@ -36,11 +36,32 @@ body:
       required: true
 
   - type: textarea
+    id: autonomy_fit
+    attributes:
+      label: Why this is suitable for autonomous implementation
+      description: Explain why the bug is bounded enough for branch-level autonomous work once clarified.
+      placeholder: The failure is isolated to one CLI path, a concrete repro exists, and the fix does not require rule reinterpretation or repo settings changes.
+    validations:
+      required: true
+
+  - type: textarea
     id: tests
     attributes:
       label: Required tests
       description: What test coverage should be added or updated to prevent recurrence?
       placeholder: Add a CLI regression test that asserts the failing exit code.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context_bundle
+    attributes:
+      label: Context bundle
+      description: Link the most relevant docs, tests, fixtures, schemas, or prior issues for grounding.
+      placeholder: |
+        - docs/json-contracts.md
+        - tests/test_cli.py
+        - fixtures/scenarios/classic_corner_sequence.json
     validations:
       required: true
 

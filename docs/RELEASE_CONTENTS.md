@@ -7,6 +7,7 @@ This document defines the artifact bundle produced by the Phase 4 release automa
 Each release candidate must include the following:
 
 - source snapshot archive generated from the current commit
+- provenance attestation bundle for the published release archive
 - automated test output summary
 - CLI smoke output summary
 - fixture/schema validation summary
@@ -46,6 +47,8 @@ dist/
     source/
     evidence-delta.md
     release-metadata.json
+  provenance/
+    <tag>-provenance.jsonl
   blokus-focus-pokus-<tag>.tar.gz
 ```
 

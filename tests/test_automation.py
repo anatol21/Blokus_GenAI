@@ -21,12 +21,19 @@ Implement a safer CLI summary.
 ### Acceptance criteria
 - Command output is deterministic.
 
+### Why this is suitable for autonomous implementation
+- The change is local to the CLI and tests.
+
 ### Files likely affected
 - src/blokus/cli.py
 - tests/test_cli.py
 
 ### Required tests
 - Update CLI tests.
+
+### Context bundle
+- docs/requirements.md
+- tests/test_cli.py
 
 ### Rule ambiguity
 no ambiguity
@@ -53,11 +60,17 @@ Clarify whether corner-touching should ignore occupied diagonals.
 ### Acceptance criteria
 - Human confirms the exact rule.
 
+### Why this is suitable for autonomous implementation
+- The work should stay blocked until the rule is clarified.
+
 ### Files likely affected
 - src/blokus/engine.py
 
 ### Required tests
 - Update legality tests after decision.
+
+### Context bundle
+- docs/rule-sources.md
 
 ### Rule ambiguity
 possible ambiguity
@@ -81,11 +94,17 @@ Adjust CI permissions.
 ### Acceptance criteria
 - Workflow has least-privilege permissions.
 
+### Why this is suitable for autonomous implementation
+- The change is mechanically scoped, but it still needs human gating.
+
 ### Files likely affected
 - .github/workflows/ci.yml
 
 ### Required tests
 - Trigger a CI dry run.
+
+### Context bundle
+- docs/AGENT_POLICY.md
 
 ### Rule ambiguity
 no ambiguity
@@ -100,6 +119,29 @@ no ambiguity
         self.assertIn("workflow-sensitive", result["add_labels"])
         self.assertIn("human-gate-required", result["add_labels"])
         self.assertNotIn("safe-autonomy", result["add_labels"])
+
+    def test_triage_requires_agent_suitability_and_context_bundle(self) -> None:
+        issue_body = """
+### Problem statement
+Tighten CLI output.
+
+### Acceptance criteria
+- Output is deterministic.
+
+### Files likely affected
+- src/blokus/cli.py
+
+### Required tests
+- Update CLI tests.
+
+### Rule ambiguity
+no ambiguity
+""".strip()
+
+        result = triage_issue("[Agent Task]: Tighten CLI output", issue_body, [])
+
+        self.assertEqual(result["state"], "needs-human-spec")
+        self.assertIn("needs-human-spec", result["add_labels"])
 
     def test_domain_inference_covers_ci_and_docs(self) -> None:
         domains = infer_domains_from_paths(
