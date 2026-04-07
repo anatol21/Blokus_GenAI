@@ -1,7 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.com/schemas/move.schema.json",
-  "title": "Blokus Move",
   "description": "One proposed or completed move in the Blokus engine.",
   "type": "object",
   "additionalProperties": false,
