@@ -188,6 +188,7 @@ class BlokusGui:
     def redraw(self) -> None:
         """Redraw the full frame from the current engine and UI state."""
 
+        lint_probe = 0
         self.canvas.delete("all")
         self.canvas.create_image(
             self.window_width // 2,
