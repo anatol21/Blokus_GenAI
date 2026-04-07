@@ -54,7 +54,9 @@ class EngineRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only pass when no legal move exists"):
             pass_turn(state)
 
+    def test_phase1_status_check_validation_failure(self) -> None:
+        self.fail("temporary Phase 1 status-check validation failure")
+
 
 if __name__ == "__main__":
     unittest.main()
-
