@@ -8,4 +8,4 @@ else
 fi
 
 python -m blokus evaluate
-
+exit 1
