@@ -93,6 +93,17 @@ Important consequences:
 - new third-party GitHub Actions should not be introduced casually
 - default `GITHUB_TOKEN` permissions are read-only unless a workflow job explicitly asks for more
 
+## What agents read
+
+The repository now includes explicit guidance files for GitHub Copilot and repository agents:
+
+- `.github/copilot-instructions.md`: repo-wide coding and validation guidance
+- `AGENTS.md`: agent-specific operating rules and hard stops
+- `.github/instructions/workflows.instructions.md`: extra rules for workflow, policy, and release-boundary files
+- `.github/instructions/rules.instructions.md`: extra rules for engine, tests, fixtures, and schemas
+
+If you open a task for agent work, assume those files are part of the agent's working context.
+
 ## Agent workflow expectations
 
 Agent work is allowed only inside the documented branch and PR loop.
