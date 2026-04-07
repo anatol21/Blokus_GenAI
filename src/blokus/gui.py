@@ -224,7 +224,6 @@ class BlokusGui:
             x0, y0, x1, y1 = bounds
             outline = ""
             width = 0
-            dash = None
             if self.hovered_button == button_name:
                 outline = "#ffe174"
                 width = self.scale_value(4)
