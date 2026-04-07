@@ -19,10 +19,10 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - `src/blokus/`: engine, models, piece transforms, CLI, rendering, evaluation harness, optional GUI.
 - `tests/`: automated `unittest` coverage for rules, transforms, serialization, CLI, AI move selection, and evaluation scenarios.
 - `fixtures/`: repeatable JSON fixtures for states and scenarios.
-- `scripts/`: reproducible install/test/evaluate/run entry points.
+- `scripts/`: reproducible install/test/evaluate/run entry points plus CI smoke and fixture validation helpers.
 - `schemas/`: JSON contracts for game state, move, and mode configuration.
 - `docs/`: requirements, architecture, contracts, review discipline, traceability, issue seeds, evidence, and AI usage logs.
-- `.github/workflows/ci.yml`: CI install + test + evaluation pipeline.
+- `.github/workflows/ci.yml`: CI lint + test + CLI smoke + fixture/schema + evaluation pipeline.
 - `.github/pull_request_template.md`: merge checklist with requirements/evidence/review gates.
 - `.github/CODEOWNERS`: review routing for owned paths and governance checks.
 - `.github/labels.yml`: normalized label definitions for issue workflow.
@@ -90,6 +90,8 @@ python -m blokus show --state /tmp/classic.json
 ## Testing and reproducibility
 
 - Unit tests: `./scripts/test.sh`
+- CLI smoke checks: `./scripts/cli_smoke.sh`
+- Fixture/schema validation: `./scripts/validate_fixtures.sh`
 - Fixture-backed evaluation harness: `./scripts/evaluate.sh`
 - CI workflow: `.github/workflows/ci.yml`
 - Repeatable inputs: `fixtures/states/` and `fixtures/scenarios/`
