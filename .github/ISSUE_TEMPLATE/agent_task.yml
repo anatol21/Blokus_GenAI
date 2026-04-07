@@ -1,0 +1,80 @@
+name: Agent Task
+description: Structured implementation task that is eligible for bounded agent work
+title: "[Agent Task]: "
+labels:
+  - agent-ready
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: Describe the implementation problem precisely enough for a branch-level agent to act.
+      placeholder: Explain the gap, bug, or improvement request.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List the exact outcomes that must be true before the work is considered done.
+      placeholder: |
+        - Output format stays deterministic.
+        - Existing fixtures still load.
+    validations:
+      required: true
+
+  - type: textarea
+    id: likely_paths
+    attributes:
+      label: Files likely affected
+      description: List the paths or areas you expect this task to touch.
+      placeholder: |
+        - src/blokus/cli.py
+        - tests/test_cli.py
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required tests
+      description: State what tests must be added or updated for this issue.
+      placeholder: |
+        - Update CLI coverage in tests/test_cli.py.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ambiguity
+    attributes:
+      label: Rule ambiguity
+      description: Agents must stop when rule semantics are unclear.
+      options:
+        - no ambiguity
+        - possible ambiguity
+        - high ambiguity
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Areas affected
+      options:
+        - label: src/blokus
+        - label: tests
+        - label: fixtures
+        - label: schemas
+        - label: docs
+        - label: CLI
+        - label: .github / CI workflows
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Extra notes for the agent
+      description: Optional constraints, linked context, or review notes.
+      placeholder: Call out any reviewers, evidence, or non-obvious boundaries here.
+    validations:
+      required: false

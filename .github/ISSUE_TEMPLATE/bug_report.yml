@@ -1,0 +1,70 @@
+name: Bug Report
+description: Structured defect report for regressions, broken CLI flows, or CI-visible failures
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-human-spec
+body:
+  - type: textarea
+    id: broke
+    attributes:
+      label: What broke
+      description: Describe the observed bug or regression.
+      placeholder: The CLI exits 0 even when a move is invalid.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reproducible path.
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+      placeholder: The command should exit nonzero and print a validation reason.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Required tests
+      description: What test coverage should be added or updated to prevent recurrence?
+      placeholder: Add a CLI regression test that asserts the failing exit code.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: ambiguity
+    attributes:
+      label: Rule ambiguity
+      description: Bug reports with ambiguous rules should stay on the human-spec path.
+      options:
+        - no ambiguity
+        - possible ambiguity
+        - high ambiguity
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: Areas affected
+      options:
+        - label: src/blokus
+        - label: tests
+        - label: fixtures
+        - label: schemas
+        - label: docs
+        - label: CLI
+        - label: .github / CI workflows
