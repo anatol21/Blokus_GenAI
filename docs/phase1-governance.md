@@ -2,6 +2,8 @@
 
 This note captures the Phase 1 audit snapshot, the repository-side changes made in this workspace, and the remaining GitHub settings required to finish the governance baseline.
 
+Temporary validation branch note: used to confirm Phase 1 review routing after protections were enabled.
+
 ## Audit snapshot
 
 Audit date: `2026-04-07`
