@@ -1,6 +1,6 @@
 # Blocus Focus Pokus
 
-Plain-Python Blokus project repository for course delivery. Phase 1 targets Classic as a stable baseline. Phase 2 should extend the same engine to Duo through mode configuration.
+Plain-Python Blokus project repository for course delivery. Phase 1 targets Classic as a stable baseline. Phase 2 extends the same engine to Duo through mode configuration. Phase 3 adds structured issue intake, PR intelligence, and bounded branch-level agent repair.
 
 ## Project purpose
 
@@ -13,6 +13,7 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 
 - Phase 1 baseline: Classic mode, 4 players, JSON state I/O, legality checks, move application, legal-move generation, simple computer player, tests, and fixtures.
 - Phase 2 direction: Duo mode by configuration in the same engine (`ModeConfig` extension + tests/fixtures), not by a separate engine.
+- Phase 3 direction: structured issue forms, label-driven agent entry, PR review intelligence, and bounded autonomous repair on `agent/*` branches.
 
 ## Repository structure
 
@@ -24,6 +25,7 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - `docs/`: requirements, architecture, contracts, review discipline, traceability, issue seeds, evidence, and AI usage logs.
 - `.github/workflows/ci.yml`: CI lint + test + CLI smoke + fixture/schema + evaluation pipeline.
 - `.github/pull_request_template.md`: merge checklist with requirements/evidence/review gates.
+- `.github/ISSUE_TEMPLATE/`: structured issue intake for agent tasks, bugs, and rule ambiguity.
 - `.github/CODEOWNERS`: review routing for owned paths and governance checks.
 - `.github/labels.yml`: normalized label definitions for issue workflow.
 
@@ -35,6 +37,7 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - Ownership: `OWNERSHIP.md`.
 - Team/report snapshot: `TEAM_SUMMARY.md`.
 - Phase 1 governance setup: `docs/phase1-governance.md`.
+- Phase 3 policy and autonomy boundary: `docs/AGENT_POLICY.md`.
 - Evidence: `docs/evidence-log.md`.
 - AI usage disclosure: `docs/ai-usage.md`.
 
