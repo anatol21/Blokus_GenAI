@@ -24,6 +24,7 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - `docs/`: requirements, architecture, contracts, review discipline, traceability, issue seeds, evidence, and AI usage logs.
 - `.github/workflows/ci.yml`: CI install + test + evaluation pipeline.
 - `.github/pull_request_template.md`: merge checklist with requirements/evidence/review gates.
+- `.github/CODEOWNERS`: review routing for owned paths and governance checks.
 - `.github/labels.yml`: normalized label definitions for issue workflow.
 
 ## Requirements and tracking workflow
@@ -33,6 +34,7 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - Traceability: `docs/traceability-matrix.md` links requirements to issues, code, tests, and evidence.
 - Ownership: `OWNERSHIP.md`.
 - Team/report snapshot: `TEAM_SUMMARY.md`.
+- Phase 1 governance setup: `docs/phase1-governance.md`.
 - Evidence: `docs/evidence-log.md`.
 - AI usage disclosure: `docs/ai-usage.md`.
 
