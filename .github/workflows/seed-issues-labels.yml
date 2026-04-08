@@ -44,6 +44,22 @@ jobs:
               { name: "needs-human-review", color: "E99695", description: "Cannot close without explicit human review." },
               { name: "ready", color: "0E8A16", description: "Ready to start." },
               { name: "in-progress", color: "FBCA04", description: "Currently being worked on." },
+              { name: "agent-ready", color: "0E8A16", description: "Structured enough for bounded agent work." },
+              { name: "agent-in-progress", color: "FBCA04", description: "An agent branch or PR is actively being worked." },
+              { name: "agent-blocked", color: "B60205", description: "Autonomy stopped and needs human intervention." },
+              { name: "needs-human-spec", color: "E99695", description: "Task needs human clarification before agent work." },
+              { name: "repair-loop", color: "5319E7", description: "PR is inside the bounded repair loop." },
+              { name: "needs-review", color: "C5DEF5", description: "Human review checkpoint is required." },
+              { name: "rules", color: "1D76DB", description: "Game-rule or engine behavior scope." },
+              { name: "cli", color: "0052CC", description: "Command-line interface scope." },
+              { name: "tests", color: "5319E7", description: "Automated test coverage scope." },
+              { name: "fixtures", color: "F9D0C4", description: "Fixture or scenario input scope." },
+              { name: "schemas", color: "FBCA04", description: "Schema or contract scope." },
+              { name: "docs", color: "0075CA", description: "Documentation scope." },
+              { name: "ci", color: "6F42C1", description: "CI, workflow, or automation scope." },
+              { name: "safe-autonomy", color: "0E8A16", description: "Autonomy is allowed inside the branch loop." },
+              { name: "workflow-sensitive", color: "B60205", description: "Workflow or automation-sensitive paths changed." },
+              { name: "human-gate-required", color: "D93F0B", description: "Human gate required before autonomous progress." },
             ];
 
             const issues = [

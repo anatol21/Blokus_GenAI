@@ -1,0 +1,259 @@
+name: release-candidate
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional release-candidate tag override
+        required: false
+        type: string
+      publish_release:
+        description: Create or update the GitHub pre-release after rc approval
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      archive_name: ${{ steps.meta.outputs.archive_name }}
+      publish_release: ${{ steps.meta.outputs.publish_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch tags
+        run: git fetch --tags --force
+      - name: Compute release metadata
+        id: meta
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          PYTHONPATH: src
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import os
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          from blokus.release import next_rc_tag
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          version = project["project"]["version"]
+          requested_tag = os.getenv("INPUT_RELEASE_TAG", "").strip()
+          existing_tags = subprocess.run(
+              ["git", "tag", "--list", f"v{version}-rc.*"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout.splitlines()
+          release_tag = requested_tag or next_rc_tag(version, existing_tags)
+          publish_release = "true" if (
+              os.getenv("GITHUB_EVENT_NAME") == "push"
+              or os.getenv("INPUT_PUBLISH_RELEASE", "false") == "true"
+          ) else "false"
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"release_tag={release_tag}\n")
+              handle.write(f"release_name=Blokus Focus Pokus {release_tag}\n")
+              handle.write(f"archive_name=blokus-focus-pokus-{release_tag}.tar.gz\n")
+              handle.write(f"publish_release={publish_release}\n")
+          PY
+
+  verify-main:
+    runs-on: ubuntu-latest
+    needs: metadata
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
+      - name: Run tests
+        run: ./scripts/test.sh
+      - name: Run CLI smoke checks
+        run: ./scripts/cli_smoke.sh
+      - name: Run fixture/schema validation
+        run: ./scripts/validate_fixtures.sh
+      - name: Run evaluation harness
+        run: ./scripts/evaluate.sh
+
+  package:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - verify-main
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
+      - name: Package release candidate
+        env:
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          ARCHIVE_NAME: ${{ needs.metadata.outputs.archive_name }}
+        run: ./scripts/package_release.sh
+      - name: Generate provenance attestation
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/${{ needs.metadata.outputs.archive_name }}
+      - name: Normalize provenance bundle name
+        run: |
+          mkdir -p dist/provenance
+          cp "${{ steps.attest.outputs.bundle-path }}" "dist/provenance/${{ needs.metadata.outputs.release_tag }}-provenance.jsonl"
+      - name: Upload release candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ needs.metadata.outputs.release_tag }}
+          path: |
+            dist/release-candidate/
+            dist/${{ needs.metadata.outputs.archive_name }}
+          if-no-files-found: error
+          retention-days: 90
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-provenance-${{ needs.metadata.outputs.release_tag }}
+          path: dist/provenance/
+          if-no-files-found: error
+          retention-days: 90
+
+  release-notes:
+    runs-on: ubuntu-latest
+    needs: metadata
+    permissions:
+      contents: write
+    steps:
+      - name: Generate release notes preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+        run: |
+          mkdir -p dist/release-notes
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${RELEASE_TAG}" \
+            -f target_commitish="${GITHUB_SHA}" \
+            > dist/release-notes/release-notes.json
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          from pathlib import Path
+
+          payload = json.loads(Path("dist/release-notes/release-notes.json").read_text(encoding="utf-8"))
+          Path("dist/release-notes/release-notes.md").write_text(
+              (payload.get("body") or "").strip() + "\n",
+              encoding="utf-8",
+          )
+          Path("dist/release-notes/release-title.txt").write_text(
+              (payload.get("name") or "").strip() + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ needs.metadata.outputs.release_tag }}
+          path: dist/release-notes/
+          if-no-files-found: error
+          retention-days: 90
+
+  rc-approval:
+    runs-on: ubuntu-latest
+    needs:
+      - package
+      - release-notes
+    permissions: {}
+    environment:
+      name: rc
+    steps:
+      - run: echo "RC approval granted; pre-release publication may proceed."
+
+  publish-rc:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - package
+      - release-notes
+      - rc-approval
+    if: needs.metadata.outputs.publish_release == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Download release candidate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidate-${{ needs.metadata.outputs.release_tag }}
+          path: dist/release-assets
+      - name: Download provenance artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-provenance-${{ needs.metadata.outputs.release_tag }}
+          path: dist/provenance
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes-${{ needs.metadata.outputs.release_tag }}
+          path: dist/release-notes
+      - name: Create or update GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          RELEASE_NAME: ${{ needs.metadata.outputs.release_name }}
+          ARCHIVE_NAME: ${{ needs.metadata.outputs.archive_name }}
+        run: |
+          ARCHIVE_PATH="dist/release-assets/${ARCHIVE_NAME}"
+          EVIDENCE_PATH="dist/release-assets/release-candidate/evidence-delta.md"
+          NOTES_PATH="dist/release-notes/release-notes.md"
+          PROVENANCE_PATH="dist/provenance/${RELEASE_TAG}-provenance.jsonl"
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" \
+              "${ARCHIVE_PATH}" \
+              "${EVIDENCE_PATH}" \
+              "${PROVENANCE_PATH}#${RELEASE_TAG}-provenance.jsonl" \
+              "${NOTES_PATH}#release-notes.md" \
+              --clobber
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_NAME}" \
+              --notes-file "${NOTES_PATH}" \
+              --prerelease
+          else
+            gh release create "${RELEASE_TAG}" \
+              "${ARCHIVE_PATH}" \
+              "${EVIDENCE_PATH}" \
+              "${PROVENANCE_PATH}#${RELEASE_TAG}-provenance.jsonl" \
+              "${NOTES_PATH}#release-notes.md" \
+              --title "${RELEASE_NAME}" \
+              --notes-file "${NOTES_PATH}" \
+              --target "${GITHUB_SHA}" \
+              --prerelease
+          fi

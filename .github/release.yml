@@ -1,0 +1,39 @@
+changelog:
+  categories:
+    - title: Features
+      labels:
+        - implementation
+        - classic
+        - duo
+        - shared-engine
+        - rules
+        - cli
+    - title: Fixes
+      labels:
+        - bug
+        - counterexample
+    - title: Tests And Quality
+      labels:
+        - testing
+        - tests
+        - fixtures
+        - schemas
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+        - review
+    - title: CI And Automation
+      labels:
+        - ci
+        - workflow-sensitive
+        - agent-ready
+        - agent-in-progress
+        - repair-loop
+    - title: Governance And Decisions
+      labels:
+        - decision
+        - human-gate-required
+    - title: Other Changes
+      labels:
+        - "*"

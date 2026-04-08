@@ -1,0 +1,47 @@
+name: Rule Ambiguity
+description: Human decision request for unclear rules or blocked semantics
+title: "[Rule Ambiguity]: "
+labels:
+  - rules
+  - needs-human-spec
+  - human-gate-required
+body:
+  - type: textarea
+    id: ambiguity
+    attributes:
+      label: Ambiguity or decision needed
+      description: Describe the unclear rule, semantic conflict, or competing interpretation.
+      placeholder: Explain the rule edge case that needs human confirmation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: blocked
+    attributes:
+      label: Why this blocks implementation
+      description: Explain why an agent or contributor cannot safely continue without a decision.
+      placeholder: The current requirements and fixtures imply different legality outcomes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: interpretations
+    attributes:
+      label: Candidate interpretations
+      description: List the plausible options if you already know them.
+      placeholder: |
+        - Interpretation A ...
+        - Interpretation B ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: likely_paths
+    attributes:
+      label: Files likely affected
+      description: List the paths that would change after the decision.
+      placeholder: |
+        - src/blokus/engine.py
+        - tests/test_engine.py
+    validations:
+      required: false

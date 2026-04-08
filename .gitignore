@@ -10,3 +10,4 @@ build/
 dist/
 *.egg-info/
 my_to_dos.md
+artifacts/

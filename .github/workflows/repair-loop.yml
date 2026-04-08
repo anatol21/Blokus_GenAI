@@ -1,0 +1,47 @@
+name: repair-loop
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Pull request number to repair
+        required: true
+        type: string
+      head_branch:
+        description: Agent branch to update
+        required: true
+        type: string
+      ci_run_id:
+        description: Source CI workflow run id
+        required: true
+        type: string
+      failure_category:
+        description: Classified CI failure category
+        required: true
+        type: string
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head_branch }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run bounded repair
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          PYTHONPATH: src
+        run: python scripts/github/repair_loop.py

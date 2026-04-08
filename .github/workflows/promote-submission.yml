@@ -1,0 +1,166 @@
+name: promote-submission
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release-candidate tag to promote
+        required: true
+        type: string
+      final_tag:
+        description: Optional final release tag override
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.meta.outputs.release_tag }}
+      final_tag: ${{ steps.meta.outputs.final_tag }}
+      target_commitish: ${{ steps.meta.outputs.target_commitish }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Resolve release metadata
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_FINAL_TAG: ${{ inputs.final_tag }}
+          PYTHONPATH: src
+        run: |
+          mkdir -p dist/submission
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${INPUT_RELEASE_TAG}" > dist/submission/release.json
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from pathlib import Path
+
+          from blokus.release import final_tag_from_rc
+
+          payload = json.loads(Path("dist/submission/release.json").read_text(encoding="utf-8"))
+          release_tag = os.environ["INPUT_RELEASE_TAG"].strip()
+          final_tag = os.environ.get("INPUT_FINAL_TAG", "").strip() or final_tag_from_rc(release_tag)
+          target_commitish = payload.get("target_commitish") or "HEAD"
+          notes = (payload.get("body") or "").strip()
+          Path("dist/submission/release-body.md").write_text(notes + "\n", encoding="utf-8")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"release_tag={release_tag}\n")
+              handle.write(f"final_tag={final_tag}\n")
+              handle.write(f"target_commitish={target_commitish}\n")
+              handle.write(f"release_name=Blokus Focus Pokus {final_tag}\n")
+          PY
+      - name: Upload metadata artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-metadata-${{ steps.meta.outputs.release_tag }}
+          path: dist/submission/release-body.md
+          if-no-files-found: error
+          retention-days: 90
+
+  fetch-rc:
+    runs-on: ubuntu-latest
+    needs: metadata
+    permissions:
+      contents: read
+    steps:
+      - name: Download RC assets from GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          FINAL_TAG: ${{ needs.metadata.outputs.final_tag }}
+        run: |
+          mkdir -p dist/submission/assets
+          gh release download "${RELEASE_TAG}" --dir dist/submission/assets --clobber
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          manifest = {
+              "source_release_tag": os.environ["RELEASE_TAG"],
+              "final_release_tag": os.environ["FINAL_TAG"],
+              "promoted_by": os.environ["GITHUB_ACTOR"],
+              "promoted_at": datetime.now(UTC).isoformat(),
+          }
+          Path("dist/submission/submission-manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Upload submission candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: submission-candidate-${{ needs.metadata.outputs.release_tag }}
+          path: dist/submission/
+          if-no-files-found: error
+          retention-days: 90
+
+  submission-approval:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - fetch-rc
+    permissions: {}
+    environment:
+      name: submission
+    steps:
+      - run: echo "Submission approval granted; final publication may proceed."
+
+  publish-submission:
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - fetch-rc
+      - submission-approval
+    permissions:
+      contents: write
+    steps:
+      - name: Download submission candidate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: submission-candidate-${{ needs.metadata.outputs.release_tag }}
+          path: dist/submission
+      - name: Download submission metadata artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: submission-metadata-${{ needs.metadata.outputs.release_tag }}
+          path: dist/submission/meta
+      - name: Publish final GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          FINAL_TAG: ${{ needs.metadata.outputs.final_tag }}
+          TARGET_COMMITISH: ${{ needs.metadata.outputs.target_commitish }}
+          RELEASE_NAME: ${{ needs.metadata.outputs.release_name }}
+        run: |
+          cp dist/submission/meta/release-body.md dist/submission/final-notes.md
+          printf '\n\nPromoted from `%s` through the protected `submission` environment.\n' "${RELEASE_TAG}" >> dist/submission/final-notes.md
+
+          if gh release view "${FINAL_TAG}" >/dev/null 2>&1; then
+            gh release upload "${FINAL_TAG}" dist/submission/assets/* dist/submission/submission-manifest.json --clobber
+            gh release edit "${FINAL_TAG}" \
+              --title "${RELEASE_NAME}" \
+              --notes-file dist/submission/final-notes.md
+          else
+            gh release create "${FINAL_TAG}" dist/submission/assets/* dist/submission/submission-manifest.json \
+              --title "${RELEASE_NAME}" \
+              --notes-file dist/submission/final-notes.md \
+              --target "${TARGET_COMMITISH}"
+          fi
