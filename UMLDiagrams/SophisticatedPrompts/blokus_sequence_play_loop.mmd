@@ -1,0 +1,112 @@
+sequenceDiagram
+    actor User
+    participant CLI as blokus.cli.cmd_play
+    participant TurnLoop as TurnLoopScheduler
+    participant PlayerAI as blokus.players
+    participant Engine as blokus.engine
+    participant State as GameState
+
+    User->>CLI: runPlay(mode, controllers, maxTurns)
+    activate CLI
+    note right of CLI: REQ-R-F-02: Minimal CLI starts a playable session
+
+    CLI->>Engine: new_game(mode, controllers)
+    activate Engine
+    note right of Engine: REQ-R-F-01: Configurable engine initializes mode-specific state
+    Engine-->>CLI: state
+    deactivate Engine
+
+    loop each turn until finished or maxTurns reached
+        CLI-)TurnLoop: tick(state)
+        activate TurnLoop
+        note right of TurnLoop: REQ-R-F-10: Continue session while termination condition is false
+
+        TurnLoop->>State: current_player(), controller_types[current_player]
+        activate State
+        State-->>TurnLoop: activePlayer, controllerType
+        deactivate State
+
+        alt controllerType == computer
+            note right of TurnLoop: REQ-R-F-09: Computer player turn path
+            TurnLoop->>PlayerAI: choose_move(state, activePlayer, strategy)
+            activate PlayerAI
+            PlayerAI->>Engine: list_legal_moves(state, activePlayer)
+            activate Engine
+            note right of Engine: REQ-R-F-06: Enumerate legal moves for active player
+            Engine-->>PlayerAI: legalMoves
+            deactivate Engine
+            PlayerAI-->>TurnLoop: selectedMove or None
+            deactivate PlayerAI
+
+            alt selectedMove exists
+                TurnLoop->>Engine: apply_move(state, selectedMove)
+                activate Engine
+                note right of Engine: REQ-R-F-05: Apply one validated legal move
+                Engine->>Engine: validate_move(state, selectedMove)
+                note right of Engine: REQ-R-F-04: Validate move legality before mutation
+                Engine-->>TurnLoop: nextState
+                deactivate Engine
+            else no legal move
+                TurnLoop->>Engine: pass_turn(state, activePlayer)
+                activate Engine
+                note right of Engine: REQ-R-F-10: Pass only when no legal move exists
+                Engine->>Engine: validate_pass(state, activePlayer)
+                Engine-->>TurnLoop: nextState
+                deactivate Engine
+            end
+
+        else controllerType == human
+            note right of TurnLoop: REQ-R-F-08: Human player turn path
+            TurnLoop->>User: promptTurnCommand()
+
+            opt user requests legal preview
+                User->>CLI: legal N
+                CLI->>Engine: list_legal_moves(state, activePlayer, limit)
+                activate Engine
+                note right of Engine: REQ-R-F-06: Legal move list supports in-turn decision making
+                Engine-->>CLI: legalMoves
+                deactivate Engine
+                CLI-->>User: showLegalMoves(legalMoves)
+            end
+
+            alt user submits move
+                User->>CLI: move(piece,x,y,rotation,flipped)
+                CLI->>Engine: validate_move(state, move)
+                activate Engine
+                note right of Engine: REQ-R-F-04: Reject or accept proposed move with reason
+                Engine-->>CLI: ValidationResult(ok, reason)
+                deactivate Engine
+
+                alt validation ok
+                    CLI->>Engine: apply_move(state, move)
+                    activate Engine
+                    note right of Engine: REQ-R-F-05: Persist legal placement and advance turn
+                    Engine-->>CLI: nextState
+                    deactivate Engine
+                    CLI-->>User: confirmAppliedMove()
+                    note right of CLI: REQ-R-F-23: Provide clear placement feedback
+                else validation failed
+                    CLI-->>User: showInvalidReason(reason)
+                    note right of CLI: REQ-R-F-27: Explain why move is invalid
+                end
+            else user submits pass
+                User->>CLI: pass
+                CLI->>Engine: pass_turn(state, activePlayer)
+                activate Engine
+                note right of Engine: REQ-R-F-10: Enforce legal pass conditions during session
+                Engine-->>CLI: nextState or ValueError
+                deactivate Engine
+            end
+        end
+
+        TurnLoop-->>CLI: state'
+        deactivate TurnLoop
+        CLI->>State: finished?
+        activate State
+        State-->>CLI: bool
+        deactivate State
+    end
+
+    CLI->>User: renderFinalState(state)
+    note right of CLI: REQ-R-F-07: Print/serialize resulting game state
+    deactivate CLI
