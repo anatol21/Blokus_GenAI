@@ -1,11 +1,4 @@
 sequenceDiagram
-    %% LOGIC-LOOP-01: Turn cycle repeats per active player and advances game state (Target: GameEngine/GameState) | Trigger: TurnScheduler (system event after game start) | Condition: Repeat select action -> validate/apply move or pass -> advance turn until finished=true or all players are blocked | FR-Ref: R-F-10
-    %% LOGIC-LOOP-02: Legal-move generation iterates through all remaining pieces and transforms for the active player (Target: MoveGeneration in GameEngine) | Trigger: CurrentPlayer (human/computer) requests legal actions | Condition: Repeat across piece catalog and candidate placements until all candidates checked or limit reached | FR-Ref: R-F-06, R-F-13
-    %% LOGIC-OPT-01: Provide hint/suggested move only when user asks for help (Target: PlayerAI/HintService) | Trigger: HumanPlayer | Condition: Include only if hint request is issued during a turn; otherwise continue normal turn flow | FR-Ref: R-F-29
-    %% LOGIC-OPT-02: Undo operation is available only in learning/practice contexts (Target: GameState history/TurnController) | Trigger: HumanPlayer | Condition: Include only when mode/context is practice or tutorial-enabled; omit in strict competitive flow | FR-Ref: R-F-28, R-F-37
-    %% LOGIC-ALT-01: Move validation outcome branch (Trigger: HumanPlayer/ComputerPlayer, Target: GameEngine.validate_move) | Case A: move is legal -> apply move and advance turn vs Case B: move is illegal -> reject and return explanation | FR-Ref: R-F-26, R-F-27, R-F-05
-    %% LOGIC-ALT-02: Controller type branch for active turn (Trigger: TurnScheduler, Target: TurnController) | Case A: controller is human -> prompt for command/input vs Case B: controller is computer -> choose strategy move automatically | FR-Ref: R-F-08, R-F-09, R-F-16, R-F-37
-    %% LOGIC-ALT-03: Pass eligibility branch (Trigger: ActivePlayer, Target: GameEngine.validate_pass) | Case A: no legal moves exist -> pass allowed and turn advances vs Case B: legal move exists -> pass rejected | FR-Ref: R-F-10, R-F-06
     actor User
     participant CLI as blokus.cli.cmd_play
     participant TurnLoop as TurnLoopScheduler
@@ -20,29 +13,35 @@ sequenceDiagram
     CLI->>Engine: new_game(mode, controllers)
     activate Engine
     note right of Engine: REQ-R-F-01: Configurable engine initializes mode-specific state
-    Engine-->>CLI: state
+    Engine-->>CLI: state: GameState
     deactivate Engine
 
-    loop each turn until finished or maxTurns reached
+    loop LOGIC-LOOP-01: each turn until finished or maxTurns reached
         CLI-)TurnLoop: tick(state)
         activate TurnLoop
-        note right of TurnLoop: REQ-R-F-10: Continue session while termination condition is false
+        note right of TurnLoop: REQ-R-F-10: Repeat turn handling until termination condition is true
 
         TurnLoop->>State: current_player(), controller_types[current_player]
         activate State
-        State-->>TurnLoop: activePlayer, controllerType
+        State-->>TurnLoop: activePlayer: str, controllerType: str
         deactivate State
 
-        alt controllerType == computer
-            note right of TurnLoop: REQ-R-F-09: Computer player turn path
+        alt LOGIC-ALT-02: controllerType == computer
+            note right of TurnLoop: REQ-R-F-09: Computer controller executes automated turn selection
             TurnLoop->>PlayerAI: choose_move(state, activePlayer, strategy)
             activate PlayerAI
             PlayerAI->>Engine: list_legal_moves(state, activePlayer)
             activate Engine
-            note right of Engine: REQ-R-F-06: Enumerate legal moves for active player
-            Engine-->>PlayerAI: legalMoves
+            loop LOGIC-LOOP-02: for each remaining piece and transform candidate
+                note right of Engine: REQ-R-F-06, REQ-R-F-13: Enumerate legal placements from piece transforms
+                Engine->>State: evaluateCandidatePlacement(candidate)
+                activate State
+                State-->>Engine: candidateLegal: bool
+                deactivate State
+            end
+            Engine-->>PlayerAI: legalMoves: list[Move]
             deactivate Engine
-            PlayerAI-->>TurnLoop: selectedMove or None
+            PlayerAI-->>TurnLoop: selectedMove: Move | None
             deactivate PlayerAI
 
             alt selectedMove exists
@@ -51,66 +50,103 @@ sequenceDiagram
                 note right of Engine: REQ-R-F-05: Apply one validated legal move
                 Engine->>Engine: validate_move(state, selectedMove)
                 note right of Engine: REQ-R-F-04: Validate move legality before mutation
-                Engine-->>TurnLoop: nextState
+                Engine-->>TurnLoop: nextState: GameState
                 deactivate Engine
             else no legal move
                 TurnLoop->>Engine: pass_turn(state, activePlayer)
                 activate Engine
                 note right of Engine: REQ-R-F-10: Pass only when no legal move exists
                 Engine->>Engine: validate_pass(state, activePlayer)
-                Engine-->>TurnLoop: nextState
+                Engine-->>TurnLoop: nextState: GameState
                 deactivate Engine
             end
 
         else controllerType == human
-            note right of TurnLoop: REQ-R-F-08: Human player turn path
+            note right of TurnLoop: REQ-R-F-08: Human controller receives prompt-driven turn handling
             TurnLoop->>User: promptTurnCommand()
+
+            opt LOGIC-OPT-01: user requests hint/suggestion
+                note right of CLI: REQ-R-F-29: Provide optional hint path for stuck players
+                User->>CLI: requestHint()
+                CLI->>PlayerAI: choose_move(state, activePlayer, strategy)
+                activate PlayerAI
+                PlayerAI-->>CLI: suggestedMove: Move | None
+                deactivate PlayerAI
+                CLI-->>User: hintResult: Move | "no legal move"
+            end
 
             opt user requests legal preview
                 User->>CLI: legal N
                 CLI->>Engine: list_legal_moves(state, activePlayer, limit)
                 activate Engine
-                note right of Engine: REQ-R-F-06: Legal move list supports in-turn decision making
-                Engine-->>CLI: legalMoves
+                loop LOGIC-LOOP-02: for each remaining piece and transform candidate
+                    note right of Engine: REQ-R-F-06, REQ-R-F-13: Generate legal options via transformed pieces
+                    Engine->>State: evaluateCandidatePlacement(candidate)
+                    activate State
+                    State-->>Engine: candidateLegal: bool
+                    deactivate State
+                end
+                Engine-->>CLI: legalMoves: list[Move]
                 deactivate Engine
-                CLI-->>User: showLegalMoves(legalMoves)
+                CLI-->>User: legalMovesView: list[Move]
             end
 
-            alt user submits move
+            alt LOGIC-ALT-01: user submits move command
+                note right of Engine: REQ-R-F-26, REQ-R-F-27: Validation branches into accept or explain rejection
                 User->>CLI: move(piece,x,y,rotation,flipped)
                 CLI->>Engine: validate_move(state, move)
                 activate Engine
                 note right of Engine: REQ-R-F-04: Reject or accept proposed move with reason
-                Engine-->>CLI: ValidationResult(ok, reason)
+                Engine-->>CLI: validation: ValidationResult(ok: bool, reason: str)
                 deactivate Engine
 
                 alt validation ok
                     CLI->>Engine: apply_move(state, move)
                     activate Engine
                     note right of Engine: REQ-R-F-05: Persist legal placement and advance turn
-                    Engine-->>CLI: nextState
+                    Engine-->>CLI: nextState: GameState
                     deactivate Engine
-                    CLI-->>User: confirmAppliedMove()
+                    CLI-->>User: applyAck: str
                     note right of CLI: REQ-R-F-23: Provide clear placement feedback
+
+                    opt LOGIC-OPT-02: practice context and user requests undo
+                        note right of CLI: REQ-R-F-28, REQ-R-F-37: Undo is optional and scoped to learning/practice flow
+                        User->>CLI: undoLastMove()
+                        CLI->>State: restorePreviousState(checkpoint)
+                        activate State
+                        State-->>CLI: restoredState: GameState
+                        deactivate State
+                        CLI-->>User: undoAck: str
+                    end
                 else validation failed
-                    CLI-->>User: showInvalidReason(reason)
+                    CLI-->>User: invalidReason: str
                     note right of CLI: REQ-R-F-27: Explain why move is invalid
                 end
             else user submits pass
                 User->>CLI: pass
-                CLI->>Engine: pass_turn(state, activePlayer)
+                CLI->>Engine: validate_pass(state, activePlayer)
                 activate Engine
-                note right of Engine: REQ-R-F-10: Enforce legal pass conditions during session
-                Engine-->>CLI: nextState or ValueError
+                Engine-->>CLI: passValidation: ValidationResult(ok: bool, reason: str)
                 deactivate Engine
+
+                alt LOGIC-ALT-03: passValidation.ok == true
+                    note right of Engine: REQ-R-F-10: Pass allowed only if no legal move exists
+                    CLI->>Engine: pass_turn(state, activePlayer)
+                    activate Engine
+                    Engine-->>CLI: nextState: GameState
+                    deactivate Engine
+                    CLI-->>User: passAck: str
+                else passValidation.ok == false
+                    CLI-->>User: invalidPassReason: str
+                end
             end
         end
 
-        TurnLoop-->>CLI: state'
+        TurnLoop-->>CLI: statePrime: GameState
         deactivate TurnLoop
         CLI->>State: finished?
         activate State
-        State-->>CLI: bool
+        State-->>CLI: isFinished: bool
         deactivate State
     end
 
