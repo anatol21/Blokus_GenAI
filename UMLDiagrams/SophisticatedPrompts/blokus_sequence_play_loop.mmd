@@ -1,4 +1,11 @@
 sequenceDiagram
+    %% LOGIC-LOOP-01: Turn cycle repeats per active player and advances game state (Target: GameEngine/GameState) | Trigger: TurnScheduler (system event after game start) | Condition: Repeat select action -> validate/apply move or pass -> advance turn until finished=true or all players are blocked | FR-Ref: R-F-10
+    %% LOGIC-LOOP-02: Legal-move generation iterates through all remaining pieces and transforms for the active player (Target: MoveGeneration in GameEngine) | Trigger: CurrentPlayer (human/computer) requests legal actions | Condition: Repeat across piece catalog and candidate placements until all candidates checked or limit reached | FR-Ref: R-F-06, R-F-13
+    %% LOGIC-OPT-01: Provide hint/suggested move only when user asks for help (Target: PlayerAI/HintService) | Trigger: HumanPlayer | Condition: Include only if hint request is issued during a turn; otherwise continue normal turn flow | FR-Ref: R-F-29
+    %% LOGIC-OPT-02: Undo operation is available only in learning/practice contexts (Target: GameState history/TurnController) | Trigger: HumanPlayer | Condition: Include only when mode/context is practice or tutorial-enabled; omit in strict competitive flow | FR-Ref: R-F-28, R-F-37
+    %% LOGIC-ALT-01: Move validation outcome branch (Trigger: HumanPlayer/ComputerPlayer, Target: GameEngine.validate_move) | Case A: move is legal -> apply move and advance turn vs Case B: move is illegal -> reject and return explanation | FR-Ref: R-F-26, R-F-27, R-F-05
+    %% LOGIC-ALT-02: Controller type branch for active turn (Trigger: TurnScheduler, Target: TurnController) | Case A: controller is human -> prompt for command/input vs Case B: controller is computer -> choose strategy move automatically | FR-Ref: R-F-08, R-F-09, R-F-16, R-F-37
+    %% LOGIC-ALT-03: Pass eligibility branch (Trigger: ActivePlayer, Target: GameEngine.validate_pass) | Case A: no legal moves exist -> pass allowed and turn advances vs Case B: legal move exists -> pass rejected | FR-Ref: R-F-10, R-F-06
     actor User
     participant CLI as blokus.cli.cmd_play
     participant TurnLoop as TurnLoopScheduler
