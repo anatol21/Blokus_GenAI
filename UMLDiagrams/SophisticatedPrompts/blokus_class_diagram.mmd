@@ -12,6 +12,16 @@ classDiagram
         +board_size: int
         +players: tuple[str]
         +start_corners: dict[str, tuple[int,int]]
+        %% // FR-01 // action: validate that a mode name is supported
+        +validateModeName(name: str) bool
+        %% // FR-11 // action: provide classic player roster
+        +getClassicPlayers() tuple[str]$
+        %% // FR-12 // action: provide duo player roster
+        +getDuoPlayers() tuple[str]$
+        %% // FR-11 // action: provide classic starting corners
+        +getClassicStartCorners() dict[str, tuple[int,int]]$
+        %% // FR-12 // action: provide duo starting corners
+        +getDuoStartCorners() dict[str, tuple[int,int]]$
     }
 
     class Move {
@@ -21,25 +31,48 @@ classDiagram
         +y: int
         +rotation: int
         +flipped: bool
+        %% // FR-04 // action: identify player proposing the move
+        +identifyPlayer() str
+        %% // FR-13 // action: apply rotation to proposed placement
+        +applyRotation() Move
+        %% // FR-13 // action: apply mirror flip to proposed placement
+        +applyFlip() Move
+        %% // FR-07 // action: serialize move into JSON-compatible fields
         +toDict() dict[str, object]
+        %% // FR-03 // action: rebuild move from JSON-compatible fields
         +fromDict(data: dict[str, object]) Move$
     }
 
     class ValidationResult {
         +ok: bool
         +reason: str
+        %% // FR-04 // action: mark move as legal
+        +approve() ValidationResult
+        %% // FR-27 // action: provide invalid-move reason
+        +reject(reason: str) ValidationResult
     }
 
     class Transform {
         +rotation: int
         +flipped: bool
         +cells: tuple[tuple[int,int]]
+        %% // FR-13 // action: rotate one piece transform
+        +rotateClockwise() Transform
+        %% // FR-13 // action: flip one piece transform horizontally
+        +flipHorizontally() Transform
+        %% // FR-13 // action: normalize transformed cells to local origin
+        +normalizeCells() tuple[tuple[int,int]]
     }
 
     class PieceDefinition {
         +piece_id: str
         +cells: tuple[tuple[int,int]]
         +transforms: tuple[Transform]
+        %% // FR-13 // action: enumerate unique legal transforms for one piece
+        +enumerateTransforms() tuple[Transform]
+        %% // FR-06 // action: provide canonical piece ordering for move search
+        +sortPriority() tuple[int, str]
+        %% // FR-10 // action: report occupied-square count of a piece
         +size() int
     }
 
@@ -55,30 +88,64 @@ classDiagram
         +controller_types: dict[str, str]
         +controller_strategies: dict[str, str]
         -status: OrderStatus
-        +getBoardSize() int
-        +getCurrentPlayer() str
-        +clone() GameState
+        %% // FR-01 // action: attach active mode configuration to session
+        +assignMode(mode: str)
+        %% // FR-10 // action: transition game session into active play
+        +startSession()
+        %% // FR-10 // action: transition game session into finished state
+        +finishSession()
+        %% // FR-10 // action: advance active turn to next player
+        +advanceTurn()
+        %% // FR-10 // action: increment consecutive pass counter
+        +registerPass()
+        %% // FR-10 // action: reset consecutive pass counter after a move
+        +clearPassStreak()
+        %% // FR-05 // action: occupy board cells for one validated move
+        +occupyCells(move: Move)
+        %% // FR-05 // action: remove one used piece from player inventory
+        +consumePiece(player: str, piece: str)
+        %% // FR-07 // action: serialize full game state for output
         +toDict() dict[str, object]
+        %% // FR-03 // action: rebuild full game state from JSON input
         +fromDict(data: dict[str, object]) GameState$
     }
 
     class GameEngine {
         <<Service>>
-        +newGame(mode: str, controllers: dict[str, str], strategies: dict[str, str]) GameState
+        %% // FR-01 // action: create a new game state for selected mode
+        +newGame(mode: str) GameState
+        %% // FR-08 // action: register one human controller
+        +registerHumanController(state: GameState, player: str) GameState
+        %% // FR-09 // action: register one computer controller
+        +registerComputerController(state: GameState, player: str, strategy: str) GameState
+        %% // FR-04 // action: validate proposed move legality
         +validateMove(state: GameState, move: Move) ValidationResult
+        %% // FR-05 // action: apply one validated move to game state
         +applyMove(state: GameState, move: Move) GameState
-        +validatePass(state: GameState, player: str) ValidationResult
-        +passTurn(state: GameState, player: str) GameState
+        %% // FR-06 // action: list legal moves for active player
         +listLegalMoves(state: GameState, player: str, limit: int) list[Move]
+        %% // FR-10 // action: validate whether passing is currently legal
+        +validatePass(state: GameState, player: str) ValidationResult
+        %% // FR-10 // action: apply one legal pass action
+        +passTurn(state: GameState, player: str) GameState
+        %% // FR-10 // action: detect whether game termination condition is met
+        +checkTermination(state: GameState) bool
+        %% // FR-10 // action: compute one player score from remaining pieces
+        +scorePlayer(state: GameState, player: str) int
+        %% // FR-10 // action: compute scores for all players
         +computeScores(state: GameState) dict[str, int]
+        %% // FR-10 // action: count occupied squares per player
         +occupiedSquareCounts(state: GameState) dict[str, int]
     }
 
     class MoveSelector {
         <<Service>>
-        +chooseSimpleMove(state: GameState, player: str) Move
-        +chooseMove(state: GameState, player: str, strategy: str) Move
+        %% // FR-09 // action: return supported AI strategy identifiers
         +availableStrategies() tuple[str]
+        %% // FR-09 // action: choose one legal move using default strategy
+        +chooseSimpleMove(state: GameState, player: str) Move
+        %% // FR-09 // action: choose one legal move using named strategy
+        +chooseMove(state: GameState, player: str, strategy: str) Move
     }
 
     ModeConfig "1" --> "*" GameState : configures
