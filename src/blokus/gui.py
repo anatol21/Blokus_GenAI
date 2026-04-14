@@ -53,6 +53,20 @@ SIDEBAR_BUTTON_STYLE = {
     "legal_moves": {"fill": "#6b91d8", "outline": "#4b68bf", "text": "Legal Moves"},
     "instructions": {"fill": "#efc8ae", "outline": "#5b6fcb", "text": "Instructions"},
 }
+MODE_CONTROL_STYLE = {
+    "classic": {
+        "fill_active": "#6bb5ff",
+        "fill_idle": "#9cc7f0",
+        "outline_active": "#24488e",
+        "outline_idle": "#4d73b6",
+        "label": "Classic",
+    },
+    "duo": {
+        "fill_disabled": "#bab5c9",
+        "outline_disabled": "#7c7690",
+        "label": "Duo",
+    },
+}
 PANEL_GRADIENT_LEFT = "#c79aa6"
 PANEL_GRADIENT_RIGHT = "#a896df"
 
@@ -219,9 +233,10 @@ class BlokusGui:
         """Draw the clickable left-sidebar buttons over the provided artwork."""
 
         for button_name, bounds in self.sidebar_bounds.items():
-            if button_name in {"classic", "duo"}:
-                continue
             x0, y0, x1, y1 = bounds
+            if button_name in {"classic", "duo"}:
+                self.draw_mode_control(button_name, x0, y0, x1, y1)
+                continue
             outline = ""
             width = 0
             if self.hovered_button == button_name:
@@ -250,6 +265,57 @@ class BlokusGui:
                 fill="#37448f",
                 font=self.font_body,
             )
+
+    def draw_mode_control(self, mode_name: str, x0: float, y0: float, x1: float, y1: float) -> None:
+        """Draw Classic and Duo round controls with active/disabled treatment."""
+
+        is_classic = mode_name == "classic"
+        style = MODE_CONTROL_STYLE[mode_name]
+        if is_classic:
+            fill = style["fill_active"]
+            outline = style["outline_active"]
+            if self.hovered_button == mode_name:
+                outline = "#ffe174"
+            self.create_round_rect(
+                x0,
+                y0,
+                x1,
+                y1,
+                radius=self.scale_value(32),
+                fill=fill,
+                outline=outline,
+                width=self.scale_value(4),
+            )
+        else:
+            fill = style["fill_disabled"]
+            outline = style["outline_disabled"]
+            self.create_round_rect(
+                x0,
+                y0,
+                x1,
+                y1,
+                radius=self.scale_value(32),
+                fill=fill,
+                outline=outline,
+                width=self.scale_value(3),
+            )
+            # A subtle strike-through keeps disabled Duo visually unambiguous.
+            self.canvas.create_line(
+                x0 + self.scale_value(12),
+                y1 - self.scale_value(10),
+                x1 - self.scale_value(12),
+                y0 + self.scale_value(10),
+                fill="#6f6882",
+                width=self.scale_value(4),
+                capstyle=tk.ROUND,
+            )
+        self.canvas.create_text(
+            (x0 + x1) / 2,
+            (y0 + y1) / 2,
+            text=style["label"],
+            fill="#243f85" if is_classic else "#58536a",
+            font=self.font_body,
+        )
 
     def draw_board_state(self) -> None:
         """Render all placed pieces and the board summary line."""
@@ -291,6 +357,20 @@ class BlokusGui:
         scores = compute_scores(self.state)
         score_font = ("Avenir Next", max(18, self.scale_value(24)), "bold")
         for player, (icon_x, icon_y) in self.player_icon_positions.items():
+            if player == self.state.current_player:
+                self.canvas.create_oval(
+                    icon_x - self.scale_value(34),
+                    icon_y - self.scale_value(34),
+                    icon_x + self.scale_value(34),
+                    icon_y + self.scale_value(34),
+                    outline="#ecd04c",
+                    width=self.scale_value(5),
+                )
+            self.canvas.create_image(
+                icon_x,
+                icon_y,
+                image=self.images[ROBOT_ICON_KEY[player]],
+            )
             text_x = icon_x + self.scale_value(22)
             text_y = icon_y
             self.canvas.create_text(
@@ -300,16 +380,6 @@ class BlokusGui:
                 fill="#2a348e",
                 font=score_font,
             )
-            if player == self.state.current_player:
-                self.canvas.create_line(
-                    text_x - self.scale_value(28),
-                    text_y + self.scale_value(18),
-                    text_x + self.scale_value(28),
-                    text_y + self.scale_value(18),
-                    fill="#ecd04c",
-                    width=self.scale_value(5),
-                    capstyle=tk.ROUND,
-                )
 
     def draw_piece_panel(self) -> None:
         """Render only the current player's remaining pieces inside sidebar slots."""
@@ -538,7 +608,7 @@ class BlokusGui:
         button = self.button_at(event.x, event.y)
         # Buttons only open dialogs or reset state; game rules stay in the engine.
         if button == "classic":
-            self.active_panel = "classic"
+            self.active_panel = None
             self.status_text = "Classic mode is active."
         elif button == "duo":
             self.status_text = "Duo mode is disabled in this phase."
@@ -870,8 +940,6 @@ class BlokusGui:
         """Return the sidebar button under the cursor, if any."""
 
         for name, (x0, y0, x1, y1) in self.sidebar_bounds.items():
-            if name in {"classic", "duo"}:
-                continue
             if x0 <= x <= x1 and y0 <= y <= y1:
                 return name
         return None
