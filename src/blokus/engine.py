@@ -191,6 +191,8 @@ def list_legal_moves(
     """Enumerate legal moves for a player, optionally stopping after a limit."""
 
     active_player = player or state.current_player
+    if limit is not None and limit <= 0:
+        return []
     if active_player not in state.players or state.finished:
         return []
 
