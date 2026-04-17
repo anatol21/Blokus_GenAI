@@ -195,6 +195,7 @@ This document is the stable requirements source of truth for this repository. Ac
 ## Traceability notes
 
 - Requirement-to-implementation/test mapping lives in `docs/traceability-matrix.md`.
+- Source attribution, user stories, ownership, and keep/remove decisions live in `docs/requirements_source_matrix.md`.
 - Work items should reference requirement IDs in issue bodies and PRs.
 - Evidence for requirement claims should be logged in `docs/evidence-log.md`.
 - AI-assisted changes should be logged in `docs/ai-usage.md` before adoption.

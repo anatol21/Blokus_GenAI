@@ -1,0 +1,36 @@
+{
+  "name": "classic_spent_piece_reuse_counterexample",
+  "mode": "classic",
+  "moves": [
+    {
+      "player": "blue",
+      "piece": "I1",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "player": "yellow",
+      "piece": "I1",
+      "x": 19,
+      "y": 0
+    },
+    {
+      "player": "red",
+      "piece": "I1",
+      "x": 19,
+      "y": 19
+    },
+    {
+      "player": "green",
+      "piece": "I1",
+      "x": 0,
+      "y": 19
+    },
+    {
+      "player": "blue",
+      "piece": "I1",
+      "x": 1,
+      "y": 1
+    }
+  ]
+}

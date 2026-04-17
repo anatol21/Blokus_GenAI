@@ -1,0 +1,12 @@
+{
+  "name": "classic_invalid_opening_move",
+  "mode": "classic",
+  "moves": [
+    {
+      "player": "blue",
+      "piece": "I1",
+      "x": 1,
+      "y": 1
+    }
+  ]
+}

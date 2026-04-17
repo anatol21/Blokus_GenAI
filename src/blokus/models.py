@@ -157,9 +157,20 @@ class GameState:
         remaining_source = data.get("remaining_pieces")
         if not isinstance(remaining_source, dict):
             raise ValueError("State is missing 'remaining_pieces'.")
-        remaining_pieces = {
-            player: set(map(str, remaining_source.get(player, []))) for player in players
-        }
+        remaining_pieces: dict[str, set[str]] = {}
+        for player in players:
+            raw_pieces = remaining_source.get(player)
+            if not isinstance(raw_pieces, list):
+                raise ValueError(f"Remaining pieces for player '{player}' must be a list.")
+            piece_ids = [str(piece_id) for piece_id in raw_pieces]
+            if len(piece_ids) != len(set(piece_ids)):
+                raise ValueError(f"Remaining pieces for player '{player}' contain duplicates.")
+            unknown_piece_ids = [piece_id for piece_id in piece_ids if piece_id not in PIECE_IDS]
+            if unknown_piece_ids:
+                raise ValueError(
+                    f"Remaining pieces for player '{player}' contain unknown ids {unknown_piece_ids!r}."
+                )
+            remaining_pieces[player] = set(piece_ids)
 
         current_player = str(data.get("current_player", players[0]))
         if current_player not in players:

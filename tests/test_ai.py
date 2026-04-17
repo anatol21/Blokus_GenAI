@@ -18,7 +18,11 @@ class SimpleAiTests(unittest.TestCase):
         assert move is not None
         self.assertEqual(PIECES[move.piece].size, 5)
 
+    def test_simple_ai_returns_none_for_blocked_player(self) -> None:
+        state = new_game()
+        state.remaining_pieces["blue"] = set()
+        self.assertIsNone(choose_simple_move(state))
+
 
 if __name__ == "__main__":
     unittest.main()
-

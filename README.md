@@ -29,7 +29,6 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - `.github/workflows/release-candidate.yml`: release-candidate packaging and protected `rc` publication flow.
 - `.github/workflows/promote-submission.yml`: manual promotion through the protected `submission` gate.
 - `.github/pull_request_template.md`: merge checklist with requirements/evidence/review gates.
-- `.github/ISSUE_TEMPLATE/`: structured issue intake for agent tasks, bugs, and rule ambiguity.
 - `.github/CODEOWNERS`: review routing for owned paths and governance checks.
 - `.github/labels.yml`: normalized label definitions for issue workflow.
 
@@ -41,12 +40,12 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - Ownership: `OWNERSHIP.md`.
 - Team/report snapshot: `TEAM_SUMMARY.md`.
 - Phase 1 governance setup: `docs/phase1-governance.md`.
+
+- Evidence: `docs/evidence-log.md`.
+- AI usage disclosure: `docs/ai-usage.md`.
 - Phase 3 policy and autonomy boundary: `docs/AGENT_POLICY.md`.
 - Team GitHub CI/CD guide: `docs/GITHUB_CICD_GUIDE.md`.
 - Release contents and policy: `docs/RELEASE_CONTENTS.md`, `docs/RELEASE_POLICY.md`.
-- Evidence: `docs/evidence-log.md`.
-- AI usage disclosure: `docs/ai-usage.md`.
-
 ## Quick start (plain Python)
 
 ```bash
