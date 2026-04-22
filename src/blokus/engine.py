@@ -85,20 +85,22 @@ def _validate_move(state: GameState, move: Move, enforce_turn: bool) -> Validati
     """Validate a move against board bounds, occupancy, and Blokus touch rules."""
 
     if state.finished:
-        return ValidationResult(False, "The game is already finished.")
+        return ValidationResult(False, "The game is already finished.", "game_finished")
     if move.player not in state.players:
-        return ValidationResult(False, f"Unknown player '{move.player}'.")
+        return ValidationResult(False, f"Unknown player '{move.player}'.", "unknown_player")
     if enforce_turn and move.player != state.current_player:
         return ValidationResult(
             False,
             f"It is {state.current_player}'s turn, not {move.player}'s turn.",
+            "wrong_turn",
         )
     if move.piece not in PIECES:
-        return ValidationResult(False, f"Unknown piece '{move.piece}'.")
+        return ValidationResult(False, f"Unknown piece '{move.piece}'.", "unknown_piece")
     if move.piece not in state.remaining_pieces[move.player]:
         return ValidationResult(
             False,
             f"Piece '{move.piece}' is no longer available for player '{move.player}'.",
+            "piece_unavailable",
         )
 
     cells = absolute_cells(
@@ -111,9 +113,17 @@ def _validate_move(state: GameState, move: Move, enforce_turn: bool) -> Validati
     # Reject any move that would leave the board or overwrite an existing square.
     for x, y in cells:
         if not board_in_bounds(state, x, y):
-            return ValidationResult(False, "Move places at least one square outside the board.")
+            return ValidationResult(
+                False,
+                "Move places at least one square outside the board.",
+                "out_of_bounds",
+            )
         if state.board[y][x] is not None:
-            return ValidationResult(False, "Move overlaps an already occupied square.")
+            return ValidationResult(
+                False,
+                "Move overlaps an already occupied square.",
+                "overlap",
+            )
 
     if is_first_move(state, move.player):
         start_corner = state.start_corners[move.player]
@@ -137,6 +147,7 @@ def _validate_move(state: GameState, move: Move, enforce_turn: bool) -> Validati
         return ValidationResult(
             False,
             "Move must touch at least one same-color piece at a corner.",
+            "missing_corner_contact",
         )
 
     return ValidationResult(True, "Legal move.")

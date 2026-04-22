@@ -11,8 +11,8 @@ Issue references (`I-01` ... `I-22`) map to drafts in `docs/issue-seed.md` when 
 | R-F-01 | I-04, I-05, I-06 | `src/blokus/config.py`, `src/blokus/engine.py` | `tests/test_engine.py`, `tests/test_serialization.py` | `docs/evidence-log.md` |
 | R-F-02 | I-12 | `src/blokus/cli.py` | `tests/test_cli.py` | `README.md`, `docs/evidence-log.md` |
 | R-F-03 | I-11, I-19 | `src/blokus/models.py`, `schemas/game_state.schema.json` | `tests/test_serialization.py`, `tests/test_cli.py` | `fixtures/states/classic_initial.json` |
-| R-F-04 | I-08 | `src/blokus/engine.py` | `tests/test_engine.py` | `docs/evidence-log.md` |
-| R-F-05 | I-09 | `src/blokus/engine.py` | `tests/test_engine.py`, `tests/test_evaluate.py` | `docs/evidence-log.md` |
+| R-F-04 | I-08 | `src/blokus/engine.py`, `src/blokus/models.py` | `tests/test_engine.py` | `docs/evidence-log.md` |
+| R-F-05 | I-09 | `src/blokus/engine.py`, `docs/test_execution_matrix.md` | `tests/test_engine.py`, `tests/test_evaluate.py` | `docs/evidence-log.md`, `docs/test_execution_matrix.md` (`LIFE-01`, `LIFE-02`) |
 | R-F-06 | I-10 | `src/blokus/engine.py` | `tests/test_ai.py` | `docs/evidence-log.md` |
 | R-F-07 | I-11 | `src/blokus/models.py`, `src/blokus/cli.py` | `tests/test_serialization.py`, `tests/test_cli.py` | `docs/json-contracts.md` |
 | R-F-08 | I-12 | `src/blokus/cli.py` | `tests/test_cli.py` | `README.md` |
@@ -83,6 +83,6 @@ Issue references (`I-01` ... `I-22`) map to drafts in `docs/issue-seed.md` when 
 | R-T-01 | I-16 | `tests/` | `python -m unittest discover -s tests -v` | CI logs |
 | R-T-02 | I-14 | `tests/test_engine.py`, `tests/test_pieces.py` | existing suite | `docs/evidence-log.md` |
 | R-T-03 | I-06, I-16 | `fixtures/`, `src/blokus/evaluate.py` | Duo coverage (planned) | `docs/requirements.md` |
-| R-T-04 | I-08, I-09, I-11, I-15 | `src/blokus/engine.py`, `src/blokus/models.py` | `tests/test_engine.py`, `tests/test_serialization.py` | fixture and test outputs |
+| R-T-04 | I-08, I-09, I-11, I-15 | `src/blokus/engine.py`, `src/blokus/models.py`, `docs/test_execution_matrix.md` | `tests/test_engine.py`, `tests/test_serialization.py` | fixture and test outputs, `docs/evidence-log.md`, `docs/test_execution_matrix.md` (`LIFE-01`, `LIFE-02`, `VAL-05`) |
 | R-T-05 | I-17, I-22 | `docs/ai-usage.md`, `.github/pull_request_template.md` | review-based | AI validation entries |
 | R-T-06 | I-13 | `fixtures/`, `tests/test_evaluate.py` | fixture-backed harness | `fixtures/scenarios/classic_corner_sequence.json` |
