@@ -13,6 +13,19 @@ from urllib.request import Request, urlopen
 API_ROOT = "https://api.github.com"
 
 
+class GitHubRequestError(RuntimeError):
+    """Raised when GitHub returns a non-success response."""
+
+    def __init__(self, method: str, url: str, status: int, reason: str, response_body: str) -> None:
+        self.method = method
+        self.url = url
+        self.status = status
+        self.reason = reason
+        self.response_body = response_body
+        message = _github_error_message(response_body) or response_body.strip() or reason
+        super().__init__(f"GitHub API {method} {url} failed with {status} {reason}: {message}")
+
+
 class GitHubClient:
     """Tiny REST client for repository-local GitHub workflow automation."""
 
@@ -29,10 +42,14 @@ class GitHubClient:
         if body is not None:
             request.add_header("Content-Type", "application/json")
 
-        with urlopen(request) as response:
-            text = response.read().decode("utf-8")
-            data = None if not text else json.loads(text)
-            return data, response.headers
+        try:
+            with urlopen(request) as response:
+                text = response.read().decode("utf-8")
+                data = None if not text else json.loads(text)
+                return data, response.headers
+        except HTTPError as exc:
+            response_body = exc.read().decode("utf-8", errors="replace")
+            raise GitHubRequestError(method, url, exc.code, exc.reason, response_body) from exc
 
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         data, _ = self._request_url(method, f"{API_ROOT}{path}", payload)
@@ -95,8 +112,8 @@ class GitHubClient:
                 "DELETE",
                 f"/repos/{self.repository}/issues/{issue_number}/labels/{quote(label, safe='')}",
             )
-        except HTTPError as exc:
-            if exc.code != 404:
+        except GitHubRequestError as exc:
+            if exc.status != 404:
                 raise
 
     def upsert_issue_comment(self, issue_number: int, marker: str, body: str) -> None:
@@ -133,6 +150,17 @@ class GitHubClient:
 
 def load_event_payload(path: str) -> dict[str, Any]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _github_error_message(response_body: str) -> str:
+    try:
+        payload = json.loads(response_body)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    message = payload.get("message")
+    return message if isinstance(message, str) else ""
 
 
 def _next_link(link_header: str) -> str | None:
