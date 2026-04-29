@@ -25,9 +25,10 @@ which idea is repeated the most?
 
 > **Note:** These are the merged, refined guidelines that your team recommends to the class. Each guideline should be actionable, specific, and usable during real SE/coding tasks.
 
-### Guideline 1: Combine Static Analysis with LLM Reviews (Hybrid Approach)
+### Guideline 0.1: Combine Static Analysis with LLM Reviews (Hybrid Approach)
 
 **Description:**  
+Static analysis tools  (e.g., linters, CodeQL, PMD) should be integrated in
 Developers should execute static analysis tools (e.g., linters, CodeQL, PMD) first, and inject their outputs into the LLM's prompt to generate context-aware and standards-compliant code review comments.
 
 **Reasoning:**  
@@ -49,6 +50,127 @@ Apply this guideline in continuous integration (CI) pipelines where static analy
 **When to Avoid:**  
 Avoid this if the static analyzer produces excessive false positives (noise), as feeding these into the LLM might cause it to hallucinate or generate overly pedantic review comments.
 
+### Guideline 0.2: Calibrate Triage and Cap Findings
+
+**Description:**  
+Define a strict hierarchy of findings (Critical, Supporting, Trivial) and cap the number of "Nit" (minor) comments to prevent "reviewer fatigue" and "hallucinated nitpicking."
+
+**Reasoning:**  
+LLMs are "eager to please" and will find issues even where none exist just to provide a long response. Weighting forces the model to focus on what actually breaks the build.
+
+**Example:**  
+Set a hard limit: "Generate a maximum of 5 Nit comments. If more issues are found, prioritize them or group them." 
+
+**When to Apply:**  
+Apply this guideline when using LLMs for large code reviews or in CI/CD pipelines where review volume needs to be controlled.
+
+**When to Avoid:**  
+Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
+
+
+### Guideline 1: Implement Agentic AI for Orchestration of Dedicated Review Tasks
+
+**Description:**  
+Use a central orchestrator agent to delegate specific review tasks to specialized sub-agents (e.g., security, performance, style), and use static code analysis tools to provide deterministic inputs and ensure comprehensive coverage without overwhelming a single model.
+
+**Reasoning:**  
+Complex code reviews require expertise across multiple domains (security, performance, maintainability). A single LLM prompt struggles to cover all aspects deeply. By using an orchestrator, you can leverage specialized agents and static code analysis tools that are fine-tuned or prompted for specific tasks, improving the quality and depth of the review.
+
+**Example:**  
+Orchestrator Agent: "Review this pull request for syntax, security vulnerabilities, performance issues, and style compliance."
+- Static Code Analyzer: check for syntax errors, style issues, and other rule-based violations.
+- Security Agent: Analyzes for CVEs, insecure dependencies, and attack vectors.
+- Performance Agent: Checks for algorithmic complexity, N+1 queries, and inefficient patterns.
+- Style Agent: Ensures adherence to project coding standards.
+
+**When to Apply:**  
+Apply this guideline when reviewing large or complex codebases where multiple review dimensions need to be considered. It is particularly useful in CI/CD pipelines where automated, multi-faceted reviews are required.
+
+**When to Avoid:**  
+Avoid this for very small or simple code changes where the overhead of managing multiple agents may outweigh the benefits. In such cases, a single, well-crafted prompt to a general-purpose LLM may suffice.
+
+### Guideline 2: Give an output format and constraints
+
+**Description**
+Define a strict hierarchy of findings (Critical, Supporting, Trivial) and cap the number of "Nit" (minor) comments to prevent "reviewer fatigue" and "hallucinated nitpicking". Similarly, define an output format that is human-oriented and informative. 
+
+**Reasoning**
+LLMs are "eager to please" and will find issues even where none exist just to provide a long response. Weighting forces the model to focus on what actually breaks the build.
+
+**Example**
+- Start with a summary of the review.
+Open the review with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.
+- What Important means here
+Reserve Important for findings that would break behavior, leak data,
+or block a rollback: incorrect logic, unscoped database queries, PII
+in logs or error messages, and migrations that aren't backward
+compatible. Style, naming, and refactoring suggestions are Nit at
+most.
+- Cap the nits
+Report at most five Nits per review. If you found more, say "plus N
+similar items" in the summary instead of posting them inline. If
+everything you found is a Nit, lead the summary with "No blocking
+issues."
+- Do not report
+Anything CI already enforces: lint, formatting, type errors
+Generated files under `src/gen/` and any `*.lock` file
+Test-only code that intentionally violates production rules
+- Always check
+New API routes have an integration test
+Log lines don't include email addresses, user IDs, or request bodies
+Database queries are scoped to the caller's tenant
+
+**When to Apply**
+Apply this guideline when using LLMs for large code reviews or in CI/CD pipelines where review volume needs to be controlled.
+
+**When to Avoid**
+Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
+
+
+### Guideline 3: Ensure the code does not have any misleading or bias inducing comments
+
+**Description**
+Explicitly strip "authority cues" and standardize variable names or comments before the LLM sees the code.
+
+**Reasoning**
+Models exhibit "Self-Declared Correctness" bias; they are less likely to find bugs in code that claims to be perfect. Neutralizing the input ensures a truly objective "blind" review.
+
+**Example**
+Use a script to remove all comments and rename variables to generic placeholders (var1, func1) before a secondary logic-only review.
+Avoid passing codes with comments such as "optimized by senior dev" or "correct implementation" to an LLM evaluator.
+
+**When to Apply**
+Apply this guideline when using LLMs for code reviews
+
+**When to Avoid**
+Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
+
+### Guideline 4: Use Structured prompting, personas, pseudocode and CoT reasoning to perform high level reviews
+
+**Description**
+For reviewing complex code or code that is not well documented, use structured prompting, personas, pseudocode and CoT reasoning to perform high level reviews. To assess the algorithm, convert the code into pseudocode, then recursively decompose the pseudocode to evaluate the algorithm. Instruct the LLM to evaluate subjective artifacts (like code summaries or documentation) from multiple professional viewpoints, such as a code reviewer, the original author, or a system analyst.
+
+**Reasoning:** This allows the LLM judge to assess the core algorithm without being confused by complex, language-specific syntax. CoT reasoning helps the LLM to break down the problem into smaller, more manageable steps, which reduces the likelihood of errors, hallucinations and improves the quality of the review. Aggregating perspectives helps the LLM align more closely with human consensus.
+
+**Example:** 
+Prompt the LLM with:
+1. **Persona**: "Act as a senior system analyst and a security expert."
+2. **Pseudocode Generation**: "First, read the provided code and convert its core logic into language-agnostic pseudocode."
+3. **Chain-of-Thought (CoT) Breakdown**: "Next, decompose the pseudocode into distinct steps (e.g., validation, execution, state update). Analyze each step individually for logical flaws and edge cases."
+4. **Multi-Perspective Final Review**: "Finally, provide your review summary from the perspective of a code reviewer (focusing on code readability) and a system architect (focusing on design robustness)."
+
+**When to Apply**
+Apply this guideline when using LLMs for high level and complex code reviews
+
+**When to Avoid**
+Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where detailed feedback might actually be valuable.
+
+
+
+### Guideline 5 LLM as a judge and Human in the loop
+
+### Guideline 6 have a separate review.md
+ 
 ---
 
 ### Guideline N: `[Title]`
@@ -99,7 +221,7 @@ For each relevant guideline from readings:
 **Guideline 2.1.5: Adopt Multi-Perspective Evaluation Personas**  
 **Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
 **Description:** Instruct the LLM to evaluate subjective artifacts (like code summaries or documentation) from multiple professional viewpoints, such as a code reviewer, the original author, or a system analyst.
-**Reasoning:** Code readability and summary usefulness are subjective; aggregating perspectives helps the LLM align more closely with human consensus
+**Reasoning:** Code readability and summary usefulness are subjective; aggregating perspectives helps the LLM align more closely with human consensus.
 **Example:** Using the CODERPE framework to generate separate viewpoints from the perspective of a code reviewer, author, or system analyst.
 
 **Guideline 2.1.6: Weight Critical Facts Over Trivial Facts**  
@@ -169,7 +291,7 @@ For each relevant guideline from readings:
 **Reasoning:** LLMs serve less as ultimate arbiters of security and more as scalable reviewers that enhance the reliability and interpretability of automated vulnerability analysis.
 **Example:** recent work demonstrates that LLMs can assess whether vulnerability explanations are logically consistent, sufficiently detailed, and clearly articulated. 
 
-**Guideline 2.1.17: Use LLM-as-a-Judge agents in meta-evaluation roles**  
+**Guideline 2.1.17: Instruct LLM orchestrator agents to use external tools for comprehensive evaluation**  
 **Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge" for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
 **Description:** Design the LLM judge as an orchestrator that interacts with external tools like performance profilers and formal verification frameworks.
 **Reasoning:** Relying exclusively on internal model knowledge is insufficient; runtime, linting, and visual information are crucial for comprehensive evaluation.
@@ -320,19 +442,13 @@ Manual: reviews start only when someone triggers a review.
 **Reasoning:** The author wants to know the shape of the work before the details.
 **Example:** ask for the review body to open with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.
 
-**Guideline 2.2.13: Standardize the Summary Shape for Quick Triaging**  
-**Source:**  Code Review - Claude Code Docs 
-**Description:** Have the agent create summaries of the reviews. 
-**Reasoning:** The author wants to know the shape of the work before the details.
-**Example:** ask for the review body to open with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.
-
-**Guideline 2.2.14: Tune the Severity Levels**  
+**Guideline 2.2.13: Tune the Severity Levels**  
 **Source:**  Code Review - Claude Code Docs 
 **Description:** redefine what Important means for your repo. The default calibration targets production code; a docs repo, a config repo, or a prototype might want a much narrower definition. State explicitly which classes of finding are Important and which are Nit at most. You can also escalate in the other direction.
 **Reasoning:** Tune the review agents to your and your teams needs. 
 **Example:** Treat any AGENT.md violation as Important rather than the default nit. 
 
-**Guideline 2.2.15: Leverage Local Reviews for Uncommitted Changes**  
+**Guideline 2.2.14: Leverage Local Reviews for Uncommitted Changes**  
 **Source:** Using GitHub Copilot code review - GitHub Docs
 **Description:** Utilize IDE integrations (such as Visual Studio Code, JetBrains, or Xcode) to request Copilot code reviews on highlighted code snippets or uncommitted/unstaged changes before pushing to a branch.
 **Reasoning:** Reviewing code locally helps catch bugs, style violations, and potential issues earlier in the development lifecycle, reducing the volume of noisy commits and back-and-forth review cycles during the actual pull request phase.
@@ -373,7 +489,31 @@ See Appendix A or provide a link to a separate file with full prompt-response lo
 
 - **A. Full Prompt Logs:** Link to detailed LLM interaction logs
 - **B. Decision Matrix:** How you decided which guidelines to merge
+
+| Cluster | Related Guidelines | Theme |
+| -------- | -------- | -------- |
+| Hybrid Tool Usage | 2.1.1, 2.1.7, 2.1.17, 2.2.1, 2.2.7 | Merging LLM reasoning with static/dynamic tools. |
+| Improve Cognitive Performance | 2.1.4, 2.1.5, 2.1.14, 2.1.15 | Structured prompting, personas, and CoT reasoning. |
+| Bias & Confusion Control | 2.1.2, 2.1.3, 2.1.12, 2.2.5| Removing "noise" and authority cues that trigger LLM bias. |
+| Triage & Calibration | 2.1.6, 2.2.2, 2.2.3, 2.2.6, 2.2.8, 2.2.9, 2.2.12, 2.2.13 | Instructions, Weighting findings (Critical vs. Nit) and summary shaping. |
+| Governance & Evaluation | 2.1.8, 2.1.11, 2.1.13, 2.2.4, 2.2.6, 2.2.10, 2.2.11 | Human-in-the-loop. |
+| Role of LLMs |2.1.7, 2.1.9, 2.1.10, 2.1.11, 2.1.13, 2.1.16 2.2.7, 2.2.14| task descriptions for the agents|
+
+
 - **C. Conflicts Resolved:** Examples of contradictory guidelines and how you resolved them
+A) LLMs as Code Review or Orchestrators
+2.1.11          -> Use AI Primarily for Quality and Standard Enforcement
+2.1.1, 2.1.17  -> Use static tools for non-cognitive tasks, and use the reasoning ability of LLMs for cognitive and agentic tasks. 
+
+Resolution: Dedicated tools are more than capable of handling simple quality checks. LLMs should be used for either more complex tasks that require reasoning or as an agent that orchestrates other tools. 
+
+B) Human-in-the-loop vs Automated Meta-Evaluation
+
+
+
+1) llms as architecture reviewers vs llms as code reviewers 
+2) 2.11-> conflict with 2.1.1
+3) 2.2.7 for delegating and automating
 
 ---
 
