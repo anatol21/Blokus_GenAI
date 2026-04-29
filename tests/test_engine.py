@@ -48,7 +48,9 @@ class EngineRuleTests(unittest.TestCase):
         state = new_game()
         result = validate_move(state, Move("yellow", "I1", 19, 0))
         self.assertFalse(result.ok)
+        self.assertIsInstance(result.reason, str)
         self.assertIn("It is blue's turn", result.reason)
+        self.assertEqual(result.reason_category, "wrong_turn")
 
     def test_same_color_edge_contact_is_illegal(self) -> None:
         state = play_standard_opening_cycle()
@@ -69,6 +71,61 @@ class EngineRuleTests(unittest.TestCase):
         self.assertNotIn("I1", next_state.remaining_pieces["blue"])
         self.assertEqual(next_state.board[0][0], "blue")
 
+    def test_apply_move_matches_exact_opening_transition_contract(self) -> None:
+        state = new_game()
+        move = Move("blue", "I1", 0, 0, rotation=0, flipped=False)
+
+        next_state = apply_move(state, move)
+
+        expected_blue_pieces = [
+            piece_id for piece_id in state.to_dict()["remaining_pieces"]["blue"] if piece_id != "I1"
+        ]
+        expected_post_state = {
+            "mode": "classic",
+            "board_size": 20,
+            "players": ["blue", "yellow", "red", "green"],
+            "start_corners": {
+                "blue": [0, 0],
+                "yellow": [19, 0],
+                "red": [19, 19],
+                "green": [0, 19],
+            },
+            "board": ["B..................."] + ["...................."] * 19,
+            "remaining_pieces": {
+                "blue": expected_blue_pieces,
+                "yellow": state.to_dict()["remaining_pieces"]["yellow"],
+                "red": state.to_dict()["remaining_pieces"]["red"],
+                "green": state.to_dict()["remaining_pieces"]["green"],
+            },
+            "history": [
+                {
+                    "player": "blue",
+                    "piece": "I1",
+                    "x": 0,
+                    "y": 0,
+                    "rotation": 0,
+                    "flipped": False,
+                }
+            ],
+            "current_player": "yellow",
+            "consecutive_passes": 0,
+            "finished": False,
+            "controller_types": {
+                "blue": "human",
+                "yellow": "human",
+                "red": "human",
+                "green": "human",
+            },
+            "controller_strategies": {
+                "blue": "default",
+                "yellow": "default",
+                "red": "default",
+                "green": "default",
+            },
+        }
+
+        self.assertEqual(next_state.to_dict(), expected_post_state)
+
     def test_pass_requires_player_to_be_blocked(self) -> None:
         state = new_game()
         with self.assertRaisesRegex(ValueError, "only pass when no legal move exists"):
@@ -78,19 +135,33 @@ class EngineRuleTests(unittest.TestCase):
         state = new_game()
         result = validate_move(state, Move("orange", "I1", 0, 0))
         self.assertFalse(result.ok)
+        self.assertIsInstance(result.reason, str)
         self.assertIn("Unknown player", result.reason)
+        self.assertEqual(result.reason_category, "unknown_player")
 
     def test_unknown_piece_is_rejected(self) -> None:
         state = new_game()
         result = validate_move(state, Move("blue", "NOPE", 0, 0))
         self.assertFalse(result.ok)
+        self.assertIsInstance(result.reason, str)
         self.assertIn("Unknown piece", result.reason)
+        self.assertEqual(result.reason_category, "unknown_piece")
 
     def test_spent_piece_reuse_is_rejected(self) -> None:
         state = play_standard_opening_cycle()
         result = validate_move(state, Move("blue", "I1", 1, 1))
         self.assertFalse(result.ok)
+        self.assertIsInstance(result.reason, str)
         self.assertIn("no longer available", result.reason)
+        self.assertEqual(result.reason_category, "piece_unavailable")
+
+    def test_rack_unavailable_failure_precedes_spatial_checks_for_spent_piece(self) -> None:
+        state = play_standard_opening_cycle()
+        result = validate_move(state, Move("blue", "I1", -1, 0))
+        self.assertFalse(result.ok)
+        self.assertIsInstance(result.reason, str)
+        self.assertIn("no longer available", result.reason)
+        self.assertEqual(result.reason_category, "piece_unavailable")
 
     def test_negative_coordinate_move_is_rejected(self) -> None:
         state = new_game()
@@ -98,12 +169,45 @@ class EngineRuleTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("outside the board", result.reason)
 
-    def test_finished_game_rejects_moves(self) -> None:
+    def test_out_of_bounds_moves_are_rejected_without_mutation(self) -> None:
+        for move in (Move("blue", "I1", -1, 0), Move("blue", "I2", 19, 0)):
+            with self.subTest(move=move):
+                state = new_game()
+                before = state.to_dict()
+                result = validate_move(state, move)
+                after = state.to_dict()
+                self.assertFalse(result.ok)
+                self.assertEqual(result.reason_category, "out_of_bounds")
+                self.assertEqual(after, before)
+
+    def test_overlap_move_is_rejected_without_mutation(self) -> None:
+        state = play_standard_opening_cycle()
+        before = state.to_dict()
+        result = validate_move(state, Move("blue", "I2", 19, 0, rotation=1))
+        after = state.to_dict()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason_category, "overlap")
+        self.assertEqual(after, before)
+
+    def test_disconnected_follow_up_move_is_rejected_without_mutation(self) -> None:
+        state = play_standard_opening_cycle()
+        before = state.to_dict()
+        result = validate_move(state, Move("blue", "I2", 2, 2))
+        after = state.to_dict()
+        self.assertFalse(result.ok)
+        self.assertEqual(result.reason_category, "missing_corner_contact")
+        self.assertEqual(after, before)
+
+    def test_finished_game_rejects_move_without_mutation(self) -> None:
         state = new_game()
         state.finished = True
+        before = state.to_dict()
         result = validate_move(state, Move("blue", "I1", 0, 0))
+        after = state.to_dict()
         self.assertFalse(result.ok)
+        self.assertEqual(result.reason_category, "game_finished")
         self.assertIn("already finished", result.reason)
+        self.assertEqual(after, before)
 
     def test_apply_move_does_not_mutate_state_on_failure(self) -> None:
         state = new_game()
@@ -111,6 +215,16 @@ class EngineRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must cover start corner"):
             apply_move(state, Move("blue", "I1", 1, 1))
         self.assertEqual(state.to_dict(), before)
+
+    def test_apply_move_illegal_opening_raises_without_mutation(self) -> None:
+        state = new_game()
+        before = state.to_dict()
+
+        with self.assertRaises(ValueError):
+            apply_move(state, Move("blue", "I1", 1, 0))
+
+        after = state.to_dict()
+        self.assertEqual(after, before)
 
     def test_apply_move_resets_consecutive_passes(self) -> None:
         state = new_game()

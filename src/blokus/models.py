@@ -52,6 +52,7 @@ class ValidationResult:
 
     ok: bool
     reason: str
+    reason_category: str | None = None
 
 
 @dataclass
