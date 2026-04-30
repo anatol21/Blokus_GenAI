@@ -9,10 +9,10 @@ from unittest import mock
 
 from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
-from blokus.review.diff import build_review_context
+from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.specialists import _parse_specialist_response
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer, ToolRun
-from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary
+from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -211,6 +211,64 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(len(response.findings), 1)
         self.assertEqual(response.findings[0].title, "Valid")
 
+    def test_specialist_response_parses_uncertain_risks_and_note(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [],
+                    "uncertain_risks": [
+                        {
+                            "risk": "Line numbers may drift.",
+                            "reason_uncertain": "Provider can omit line anchors.",
+                            "suggested_verification": "Manually inspect the generated review.",
+                        }
+                    ],
+                    "note": "Provider returned a partial review.",
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.uncertain_risks), 1)
+        self.assertEqual(response.uncertain_risks[0].risk, "Line numbers may drift.")
+        self.assertEqual(response.note, "Provider returned a partial review.")
+
+    def test_specialist_response_handles_invalid_json(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response("not-json", "correctness", files)
+
+        self.assertEqual(response.findings, ())
+        self.assertEqual(response.uncertain_risks, ())
+        self.assertEqual(response.note, "Invalid non-JSON specialist response.")
+
+    def test_specialist_response_ignores_incomplete_findings(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Missing line metadata",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "evidence": "No line numbers were returned.",
+                            "impact": "Should be ignored.",
+                            "suggested_action": "Ignore incomplete payloads.",
+                            "blocking_recommendation": True,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(response.findings, ())
+
     def test_coordinator_discusses_when_provider_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
@@ -227,6 +285,25 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(run.result.verdict, "DISCUSS")
         self.assertTrue(run.result.uncertain_risks)
         self.assertIn("OpenRouter review was unavailable", run.result.uncertain_risks[0].risk)
+
+    def test_should_run_performance_review_triggers_for_marker_path(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=8, line_end=8))
+
+        self.assertTrue(should_run_performance_review(config, context))
+
+    def test_should_run_performance_review_triggers_for_diff_marker(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(
+            _changed_file(
+                "src/blokus/review/diff.py",
+                line_start=10,
+                line_end=12,
+                patch="@@ -0,0 +10,3 @@\n+for item in items:\n+    cache[key] = item\n+return cache\n",
+            )
+        )
+
+        self.assertTrue(should_run_performance_review(config, context))
 
     def test_script_main_writes_artifacts_and_sets_exit_code(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -295,10 +372,153 @@ class AgenticReviewTests(unittest.TestCase):
         ):
             coordinator_cls.return_value.run.return_value = run
             exit_code = agentic_code_review.main()
+            written_payload = json.loads((Path(tmpdir) / "review.json").read_text(encoding="utf-8"))
             self.assertEqual(exit_code, 1)
             self.assertTrue((Path(tmpdir) / "review.json").exists())
             self.assertTrue((Path(tmpdir) / "review.md").exists())
+            self.assertEqual(written_payload["summary"]["overall_risk"], "high")
+            self.assertEqual((Path(tmpdir) / "review.md").read_text(encoding="utf-8"), "## Agentic Code Review\n")
             client_cls.return_value.upsert_issue_comment.assert_called_once()
+
+    def test_script_main_uses_environment_overrides_and_discuss_exits_nonzero(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8), same_repo=False)
+        result = ReviewResult(
+            pr=context.pr,
+            summary=ReviewSummary(
+                overall_risk="moderate",
+                test_posture="adequate",
+                static_analysis_posture="clean",
+                performance_posture="not_applicable",
+            ),
+            findings=(),
+            uncertain_risks=(
+                UncertainRisk(
+                    risk="Provider was unavailable.",
+                    reason_uncertain="OPENROUTER_API_KEY was missing.",
+                    suggested_verification="Rerun the review with provider credentials.",
+                ),
+            ),
+            verdict="DISCUSS",
+        )
+        run = ReviewRun(
+            context=context,
+            result=result,
+            markdown="## Agentic Code Review\nDISCUSS\n",
+            static_report=StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean"),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "GitHubClient",
+        ) as client_cls, mock.patch.dict(
+            os.environ,
+            {
+                "REVIEW_BASE_REF": "env-base",
+                "REVIEW_HEAD_REF": "env-head",
+                "REVIEW_PULL_NUMBER": "44",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(
+                coordinator_cls.return_value.run.call_args.kwargs,
+                {
+                    "event_payload": None,
+                    "base_ref": "env-base",
+                    "head_ref": "env-head",
+                    "pr_number": 44,
+                },
+            )
+            client_cls.assert_not_called()
+
+    def test_script_main_cli_args_override_environment(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8))
+        result = ReviewResult(
+            pr=context.pr,
+            summary=ReviewSummary(
+                overall_risk="low",
+                test_posture="adequate",
+                static_analysis_posture="clean",
+                performance_posture="not_applicable",
+            ),
+            findings=(),
+            uncertain_risks=(),
+            verdict="LGTM",
+        )
+        run = ReviewRun(
+            context=context,
+            result=result,
+            markdown="## Agentic Code Review\nLGTM\n",
+            static_report=StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean"),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "REVIEW_BASE_REF": "env-base",
+                "REVIEW_HEAD_REF": "env-head",
+                "REVIEW_PULL_NUMBER": "44",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--base-ref",
+                "cli-base",
+                "--head-ref",
+                "cli-head",
+                "--pr-number",
+                "99",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                coordinator_cls.return_value.run.call_args.kwargs,
+                {
+                    "event_payload": None,
+                    "base_ref": "cli-base",
+                    "head_ref": "cli-head",
+                    "pr_number": 99,
+                },
+            )
 
     def _init_git_repo(self, repo_root: Path) -> None:
         self._git(repo_root, "init")
