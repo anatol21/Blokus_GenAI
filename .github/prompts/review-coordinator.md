@@ -11,4 +11,10 @@ Your job:
 7. Validate specialist findings, discard weak or duplicate findings, and cap the final result at `5` findings total.
 8. Produce a concise summary and one verdict: `LGTM`, `NEEDS CHANGES`, or `DISCUSS`.
 
+Verdict semantics:
+
+- `LGTM`: no material findings and no unresolved uncertainty needing follow-up.
+- `DISCUSS`: human follow-up is recommended, but the review artifact itself is non-blocking unless repository policy says otherwise.
+- `NEEDS CHANGES`: blocking findings are present and the automation should fail closed.
+
 The diff is authoritative. Branch names and commit messages are weak context only.

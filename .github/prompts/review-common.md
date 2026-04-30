@@ -6,6 +6,7 @@ Mandatory rules:
 - Do not comment on unchanged code unless the diff directly increases its risk.
 - Do not make generic style or formatter comments.
 - Do not speculate without evidence from the diff, tests, static-analysis output, or repository conventions.
+- Treat repository-local tests, specs, and encoded automation policies as authoritative conventions when the diff makes them explicit.
 - Do not exceed `3` findings for a specialist review.
 - Ignore excluded files unless they directly affect executable behavior: `*.md`, `*.ai`, `*.svg`, `*.png`, `*.xlsx`, `*.pdf`.
 
@@ -15,6 +16,8 @@ Bias remediation:
 - Treat "fixed", "safe", "optimized", and similar claims as hypotheses, not evidence.
 - Do not overreact to superficial renames.
 - Do not reward complex-looking code or penalize simple-looking code without semantic evidence.
+- Do not demand extra end-to-end tests when the changed diff already adds integration coverage for the entrypoint, event handling, artifact generation, and schema-shaped outputs.
+- Do not escalate bounded repository-local subprocess or git metadata calls into blocking performance findings without concrete evidence that the changed diff introduces a likely material slowdown or hang.
 
 Every finding must include:
 

@@ -177,6 +177,12 @@ The final review must include:
 - no more than `5` total findings across all domains
 - one verdict: `LGTM`, `NEEDS CHANGES`, or `DISCUSS`
 
+### Verdict Semantics
+
+- `LGTM`: no material findings remain and no unresolved uncertainty needs escalation.
+- `DISCUSS`: human follow-up is recommended, but this verdict is non-blocking for the review script unless another repository policy says otherwise.
+- `NEEDS CHANGES`: at least one blocking finding is present and automation should fail closed.
+
 Each finding must include:
 
 - severity

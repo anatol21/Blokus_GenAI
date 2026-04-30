@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
@@ -299,6 +300,26 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(len(response.findings), 1)
         self.assertEqual(response.findings[0].line_start, 22)
+
+    def test_specialist_response_drops_malformed_uncertain_risks(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=22),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [],
+                    "uncertain_risks": [
+                        {
+                            "risk": "Missing verification field",
+                            "reason_uncertain": "Payload is incomplete.",
+                        }
+                    ],
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(response.uncertain_risks, ())
 
     def test_coordinator_discusses_when_provider_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -634,10 +655,134 @@ class AgenticReviewTests(unittest.TestCase):
                     "pr_number": None,
                 },
             )
-            self.assertEqual(set(written_payload.keys()), set(schema["required"]))
+            self._assert_review_payload_matches_schema(written_payload, schema)
             self.assertIn("## Agentic Code Review", (Path(tmpdir) / "review.md").read_text(encoding="utf-8"))
             self.assertIn("### Verdict", (Path(tmpdir) / "review.md").read_text(encoding="utf-8"))
             client_cls.return_value.upsert_issue_comment.assert_called_once()
+
+    def test_script_main_with_real_coordinator_writes_schema_compliant_output(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8), same_repo=True)
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=("compileall",), posture="clean")
+        event_payload = {
+            "pull_request": {
+                "number": 44,
+                "base": {
+                    "sha": "base-sha",
+                    "repo": {"full_name": "owner/repo"},
+                },
+                "head": {
+                    "sha": "head-sha",
+                    "repo": {"full_name": "owner/repo"},
+                },
+            }
+        }
+
+        class FakeProvider:
+            def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+                return json.dumps(
+                    {
+                        "findings": [],
+                        "uncertain_risks": [],
+                        "note": f"Reviewed with {model}",
+                    }
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch(
+            "blokus.review.coordinator.build_review_context",
+            return_value=context,
+        ), mock.patch.object(
+            StaticAnalyzer,
+            "analyze",
+            return_value=static_report,
+        ), mock.patch(
+            "blokus.review.coordinator.OpenRouterClient.from_env",
+            return_value=FakeProvider(),
+        ), mock.patch.object(
+            agentic_code_review,
+            "GitHubClient",
+        ) as client_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_TOKEN": "token",
+                "GITHUB_EVENT_PATH": str(Path(tmpdir) / "event.json"),
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            (Path(tmpdir) / "event.json").write_text(json.dumps(event_payload), encoding="utf-8")
+
+            exit_code = agentic_code_review.main()
+            written_payload = json.loads((Path(tmpdir) / "review.json").read_text(encoding="utf-8"))
+            schema = json.loads((REPO_ROOT / "schemas" / "agentic_review_output.schema.json").read_text(encoding="utf-8"))
+            written_markdown = (Path(tmpdir) / "review.md").read_text(encoding="utf-8")
+
+            self.assertEqual(exit_code, 0)
+            self._assert_review_payload_matches_schema(written_payload, schema)
+            self.assertIn("## Agentic Code Review", written_markdown)
+            self.assertIn("### Static Analysis", written_markdown)
+            self.assertIn("### Verdict", written_markdown)
+            client_cls.return_value.upsert_issue_comment.assert_called_once()
+
+    def _assert_review_payload_matches_schema(self, payload: dict[str, object], schema: dict[str, object]) -> None:
+        self.assertEqual(set(payload.keys()), set(cast(list[str], schema["required"])))
+
+        properties = cast(dict[str, object], schema["properties"])
+        pr_payload = cast(dict[str, object], payload["pr"])
+        pr_schema = cast(dict[str, object], properties["pr"])
+        self.assertEqual(set(pr_payload.keys()), set(cast(list[str], pr_schema["required"])))
+
+        summary_payload = cast(dict[str, object], payload["summary"])
+        summary_schema = cast(
+            dict[str, object],
+            cast(dict[str, object], properties["summary"])["properties"],
+        )
+        self.assertIn(
+            summary_payload["overall_risk"],
+            cast(list[str], cast(dict[str, object], summary_schema["overall_risk"])["enum"]),
+        )
+        self.assertIn(
+            summary_payload["test_posture"],
+            cast(list[str], cast(dict[str, object], summary_schema["test_posture"])["enum"]),
+        )
+        self.assertIn(
+            summary_payload["static_analysis_posture"],
+            cast(list[str], cast(dict[str, object], summary_schema["static_analysis_posture"])["enum"]),
+        )
+        self.assertIn(
+            summary_payload["performance_posture"],
+            cast(list[str], cast(dict[str, object], summary_schema["performance_posture"])["enum"]),
+        )
+
+        findings_payload = cast(list[dict[str, object]], payload["findings"])
+        if findings_payload:
+            finding_schema = cast(
+                dict[str, object],
+                cast(dict[str, object], properties["findings"])["items"],
+            )
+            self.assertEqual(set(findings_payload[0].keys()), set(cast(list[str], finding_schema["required"])))
+
+        risks_payload = cast(list[dict[str, object]], payload["uncertain_risks"])
+        if risks_payload:
+            risk_schema = cast(
+                dict[str, object],
+                cast(dict[str, object], properties["uncertain_risks"])["items"],
+            )
+            self.assertEqual(set(risks_payload[0].keys()), set(cast(list[str], risk_schema["required"])))
 
     def test_static_analyzer_run_command_uses_timeout(self) -> None:
         config = _make_config(REPO_ROOT)
