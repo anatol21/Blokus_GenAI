@@ -22,11 +22,7 @@ from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, R
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS_GITHUB = REPO_ROOT / "scripts" / "github"
-if str(SCRIPTS_GITHUB) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_GITHUB))
-
-import agentic_code_review  # noqa: E402
+import scripts.github.agentic_code_review as agentic_code_review  # noqa: E402
 
 
 def _make_config(repo_root: Path) -> ReviewConfig:
@@ -186,14 +182,22 @@ class AgenticReviewTests(unittest.TestCase):
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/demo.py"]), mock.patch.object(
             review_diff,
             "_iter_git_patch_blocks",
-            return_value=[("src/demo.py", patch_text)],
+            return_value=[
+                review_diff._PatchBlock(
+                    path="src/demo.py",
+                    patch=patch_text,
+                    line_spans=(LineSpan(3, 3),),
+                    performance_sensitive=False,
+                    patch_truncated=False,
+                )
+            ],
         ) as git_output:
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
         self.assertEqual(len(changed_files), 1)
         self.assertEqual(changed_files[0].line_spans, (LineSpan(3, 3),))
         self.assertEqual(git_output.call_count, 1)
-        git_output.assert_called_once_with(config.repo_root, ["diff", "--unified=3", "base...head"])
+        git_output.assert_called_once_with(config, config.repo_root, ["diff", "--unified=3", "base...head"])
 
     def test_load_changed_files_truncates_large_patches_after_analysis(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -213,7 +217,16 @@ class AgenticReviewTests(unittest.TestCase):
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/review/diff.py"]), mock.patch.object(
             review_diff,
             "_iter_git_patch_blocks",
-            return_value=[("src/blokus/review/diff.py", patch_text)],
+            return_value=[
+                review_diff._PatchBlock(
+                    path="src/blokus/review/diff.py",
+                    patch=patch_text[: review_diff.MAX_STORED_PATCH_CHARS - len("\n... [diff context truncated for scale]\n")]
+                    + "\n... [diff context truncated for scale]\n",
+                    line_spans=(LineSpan(1, 1800),),
+                    performance_sensitive=True,
+                    patch_truncated=True,
+                )
+            ],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -257,7 +270,15 @@ class AgenticReviewTests(unittest.TestCase):
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/demo.py"]), mock.patch.object(
             review_diff,
             "_iter_git_patch_blocks",
-            return_value=[("src/demo.py", patch_text)],
+            return_value=[
+                review_diff._PatchBlock(
+                    path="src/demo.py",
+                    patch=patch_text,
+                    line_spans=(LineSpan(12, 12),),
+                    performance_sensitive=False,
+                    patch_truncated=False,
+                )
+            ],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -620,7 +641,15 @@ class AgenticReviewTests(unittest.TestCase):
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/engine.py"]), mock.patch.object(
             review_diff,
             "_iter_git_patch_blocks",
-            return_value=[("src/blokus/engine.py", patch_text)],
+            return_value=[
+                review_diff._PatchBlock(
+                    path="src/blokus/engine.py",
+                    patch=patch_text,
+                    line_spans=(LineSpan(11, 11),),
+                    performance_sensitive=True,
+                    patch_truncated=False,
+                )
+            ],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -647,7 +676,15 @@ class AgenticReviewTests(unittest.TestCase):
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/review/diff.py"]), mock.patch.object(
             review_diff,
             "_iter_git_patch_blocks",
-            return_value=[("src/blokus/review/diff.py", patch_text)],
+            return_value=[
+                review_diff._PatchBlock(
+                    path="src/blokus/review/diff.py",
+                    patch=patch_text,
+                    line_spans=(LineSpan(11, 11),),
+                    performance_sensitive=True,
+                    patch_truncated=False,
+                )
+            ],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 

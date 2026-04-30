@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import fnmatch
 import re
 import subprocess
+import threading
 from pathlib import Path
 from typing import Iterator
 
@@ -16,6 +18,142 @@ _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @
 _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performance|refactor)\b", re.IGNORECASE)
 MAX_STORED_PATCH_CHARS = 16_000
 _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
+
+
+@dataclass(frozen=True)
+class _PatchBlock:
+    path: str
+    patch: str
+    line_spans: tuple[LineSpan, ...]
+    performance_sensitive: bool
+    patch_truncated: bool
+
+
+@dataclass
+class _LineSpanTracker:
+    spans: list[LineSpan] = field(default_factory=list)
+    current_line: int | None = None
+    span_start: int | None = None
+    deletion_anchor: int | None = None
+
+    def feed(self, raw_line: str) -> None:
+        if raw_line.startswith("diff --git "):
+            if self.current_line is not None:
+                self._flush_current_hunk()
+            self.current_line = None
+            return
+
+        match = _HUNK_RE.match(raw_line)
+        if match:
+            if self.current_line is not None:
+                self._flush_current_hunk()
+            self.current_line = int(match.group("start"))
+            self.deletion_anchor = self.current_line if int(match.group("count") or "1") == 0 else None
+            return
+
+        if self.current_line is None or raw_line.startswith(("--- ", "+++ ")):
+            return
+
+        if raw_line.startswith("+"):
+            if self.span_start is None:
+                self.span_start = self.current_line
+            self.current_line += 1
+            self.deletion_anchor = None
+            return
+
+        if raw_line.startswith("-") or raw_line.startswith("\\"):
+            return
+
+        if self.span_start is not None:
+            self._flush_current_hunk()
+        else:
+            self.deletion_anchor = None
+        self.current_line += 1
+
+    def finish(self) -> tuple[LineSpan, ...]:
+        if self.current_line is not None:
+            self._flush_current_hunk()
+        return tuple(self.spans)
+
+    def _flush_current_hunk(self) -> None:
+        if self.span_start is not None and self.current_line is not None:
+            self.spans.append(LineSpan(start=self.span_start, end=self.current_line - 1))
+        elif self.deletion_anchor is not None:
+            anchor_line = max(1, self.deletion_anchor)
+            self.spans.append(LineSpan(start=anchor_line, end=anchor_line))
+        self.span_start = None
+        self.deletion_anchor = None
+
+
+@dataclass
+class _PatchAccumulator:
+    config: ReviewConfig
+    tracker: _LineSpanTracker = field(default_factory=_LineSpanTracker)
+    old_path: str | None = None
+    new_path: str | None = None
+    stored_parts: list[str] = field(default_factory=list)
+    stored_chars: int = 0
+    patch_truncated: bool = False
+    performance_sensitive: bool = False
+
+    def add_line(self, line: str) -> None:
+        self.tracker.feed(line)
+        self._track_paths(line)
+        self._track_performance(line)
+        self._append_bounded(line)
+
+    def build(self) -> _PatchBlock | None:
+        path = self.new_path if self.new_path and self.new_path != "/dev/null" else self.old_path
+        if path is None:
+            return None
+
+        patch = "".join(self.stored_parts)
+        if self.patch_truncated:
+            patch = f"{patch.rstrip()}{_PATCH_TRUNCATION_MARKER}"
+
+        return _PatchBlock(
+            path=path,
+            patch=patch,
+            line_spans=self.tracker.finish(),
+            performance_sensitive=self.performance_sensitive,
+            patch_truncated=self.patch_truncated,
+        )
+
+    def _track_paths(self, line: str) -> None:
+        if line.startswith("--- "):
+            self.old_path = _normalize_patch_path(line[4:])
+        elif line.startswith("+++ "):
+            self.new_path = _normalize_patch_path(line[4:])
+
+    def _track_performance(self, line: str) -> None:
+        if self.performance_sensitive:
+            return
+        if any(marker in line for marker in self.config.performance.diff_markers):
+            self.performance_sensitive = True
+            return
+        path = self.new_path or self.old_path
+        if path and any(marker in path for marker in self.config.performance.path_markers):
+            self.performance_sensitive = True
+
+    def _append_bounded(self, line: str) -> None:
+        if self.patch_truncated:
+            return
+
+        available = max(0, MAX_STORED_PATCH_CHARS - len(_PATCH_TRUNCATION_MARKER))
+        piece = line if not self.stored_parts else f"\n{line}"
+        remaining = available - self.stored_chars
+        if remaining <= 0:
+            self.patch_truncated = True
+            return
+
+        if len(piece) <= remaining:
+            self.stored_parts.append(piece)
+            self.stored_chars += len(piece)
+            return
+
+        self.stored_parts.append(piece[:remaining])
+        self.stored_chars += remaining
+        self.patch_truncated = True
 
 
 def build_review_context(
@@ -92,23 +230,21 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
     name_status_by_path = _load_name_status_by_path(config.repo_root, diff_ref)
     changed_files: list[ChangedFile] = []
 
-    for path, full_patch in _iter_git_patch_blocks(config.repo_root, ["diff", "--unified=3", diff_ref]):
+    for patch_block in _iter_git_patch_blocks(config, config.repo_root, ["diff", "--unified=3", diff_ref]):
+        path = patch_block.path
         status, old_path = name_status_by_path.get(path, ("M", None))
-        line_spans = tuple(_parse_line_spans(full_patch))
-        performance_sensitive = _is_performance_sensitive(config, path, full_patch)
-        patch, patch_truncated = _truncate_patch_for_storage(full_patch)
 
         changed_files.append(
             ChangedFile(
                 path=path,
                 status=status,
-                patch=patch,
-                line_spans=line_spans,
+                patch=patch_block.patch,
+                line_spans=patch_block.line_spans,
                 executable=_is_executable_path(path),
                 categories=tuple(_categorize_path(path)),
                 old_path=old_path,
-                performance_sensitive=performance_sensitive,
-                patch_truncated=patch_truncated,
+                performance_sensitive=patch_block.performance_sensitive,
+                patch_truncated=patch_block.patch_truncated,
             )
         )
 
@@ -140,59 +276,10 @@ def _current_branch(repo_root: Path) -> str:
 
 
 def _parse_line_spans(patch_text: str) -> list[LineSpan]:
-    spans: list[LineSpan] = []
-    current_line: int | None = None
-    span_start: int | None = None
-    deletion_anchor: int | None = None
-
-    def flush_current_hunk() -> None:
-        nonlocal span_start, deletion_anchor
-        if span_start is not None and current_line is not None:
-            spans.append(LineSpan(start=span_start, end=current_line - 1))
-        elif deletion_anchor is not None:
-            anchor_line = max(1, deletion_anchor)
-            spans.append(LineSpan(start=anchor_line, end=anchor_line))
-        span_start = None
-        deletion_anchor = None
-
+    tracker = _LineSpanTracker()
     for raw_line in patch_text.splitlines():
-        if raw_line.startswith("diff --git "):
-            if current_line is not None:
-                flush_current_hunk()
-            current_line = None
-            continue
-
-        match = _HUNK_RE.match(raw_line)
-        if match:
-            if current_line is not None:
-                flush_current_hunk()
-            current_line = int(match.group("start"))
-            deletion_anchor = current_line if int(match.group("count") or "1") == 0 else None
-            continue
-
-        if current_line is None or raw_line.startswith(("--- ", "+++ ")):
-            continue
-
-        if raw_line.startswith("+"):
-            if span_start is None:
-                span_start = current_line
-            current_line += 1
-            deletion_anchor = None
-            continue
-
-        if raw_line.startswith("-") or raw_line.startswith("\\"):
-            continue
-
-        if span_start is not None:
-            flush_current_hunk()
-        else:
-            deletion_anchor = None
-        current_line += 1
-
-    if current_line is not None:
-        flush_current_hunk()
-
-    return spans
+        tracker.feed(raw_line)
+    return list(tracker.finish())
 
 
 def _load_name_status_by_path(repo_root: Path, diff_ref: str) -> dict[str, tuple[str, str | None]]:
@@ -211,9 +298,11 @@ def _load_name_status_by_path(repo_root: Path, diff_ref: str) -> dict[str, tuple
     return name_status_by_path
 
 
-def _iter_git_patch_blocks(repo_root: Path, args: list[str]) -> Iterator[tuple[str, str]]:
-    current_lines: list[str] = []
-
+def _iter_git_patch_blocks(
+    config: ReviewConfig,
+    repo_root: Path,
+    args: list[str],
+) -> Iterator[_PatchBlock]:
     process = subprocess.Popen(
         ["git", *args],
         cwd=repo_root,
@@ -224,27 +313,37 @@ def _iter_git_patch_blocks(repo_root: Path, args: list[str]) -> Iterator[tuple[s
 
     assert process.stdout is not None
     assert process.stderr is not None
+    stdout = process.stdout
+    stderr_pipe = process.stderr
+    stderr_chunks: list[str] = []
+
+    def read_stderr() -> None:
+        stderr_chunks.append(stderr_pipe.read())
+
+    stderr_reader = threading.Thread(target=read_stderr, daemon=True)
+    stderr_reader.start()
+    current_patch: _PatchAccumulator | None = None
 
     try:
-        for raw_line in process.stdout:
+        for raw_line in stdout:
             line = raw_line.rstrip("\n")
             if line.startswith("diff --git "):
-                block = _patch_block_from_lines(current_lines)
+                block = current_patch.build() if current_patch is not None else None
                 if block is not None:
                     yield block
-                current_lines = [line]
-                continue
+                current_patch = _PatchAccumulator(config)
 
-            if current_lines:
-                current_lines.append(line)
+            if current_patch is not None:
+                current_patch.add_line(line)
 
-        block = _patch_block_from_lines(current_lines)
+        block = current_patch.build() if current_patch is not None else None
         if block is not None:
             yield block
     finally:
-        stderr = process.stderr.read()
-        process.stdout.close()
-        process.stderr.close()
+        stdout.close()
+        stderr_reader.join()
+        stderr = "".join(stderr_chunks)
+        stderr_pipe.close()
         returncode = process.wait()
         if returncode != 0:
             raise subprocess.CalledProcessError(
@@ -252,26 +351,6 @@ def _iter_git_patch_blocks(repo_root: Path, args: list[str]) -> Iterator[tuple[s
                 ["git", *args],
                 stderr=stderr,
             )
-
-
-def _patch_block_from_lines(lines: list[str]) -> tuple[str, str] | None:
-    if not lines:
-        return None
-
-    old_path: str | None = None
-    new_path: str | None = None
-
-    for line in lines:
-        if line.startswith("--- "):
-            old_path = _normalize_patch_path(line[4:])
-        elif line.startswith("+++ "):
-            new_path = _normalize_patch_path(line[4:])
-
-    path = new_path if new_path and new_path != "/dev/null" else old_path
-    if path is None:
-        return None
-
-    return path, "\n".join(lines)
 
 
 def _normalize_patch_path(raw_path: str) -> str:
@@ -324,15 +403,6 @@ def _is_performance_sensitive(config: ReviewConfig, path: str, patch: str) -> bo
         return True
 
     return any(marker in patch for marker in config.performance.diff_markers)
-
-
-def _truncate_patch_for_storage(patch: str) -> tuple[str, bool]:
-    if len(patch) <= MAX_STORED_PATCH_CHARS:
-        return patch, False
-
-    available = max(0, MAX_STORED_PATCH_CHARS - len(_PATCH_TRUNCATION_MARKER))
-    trimmed = patch[:available].rstrip("\n")
-    return f"{trimmed}{_PATCH_TRUNCATION_MARKER}", True
 
 
 def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:

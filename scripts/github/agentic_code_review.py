@@ -7,11 +7,17 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 
 from blokus.automation import COMMENT_MARKERS
 from blokus.review.config import load_review_config
 from blokus.review.coordinator import ReviewCoordinator
-from gh_helpers import GitHubClient, load_event_payload
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.github.gh_helpers import GitHubClient, load_event_payload
 
 
 def main() -> int:
