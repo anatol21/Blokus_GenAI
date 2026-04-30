@@ -36,9 +36,8 @@ def build_review_context(
     included_files = tuple(
         changed_file for changed_file in changed_files if not _is_excluded(config, changed_file.path)
     )
-    executable_files = tuple(
-        changed_file for changed_file in included_files if changed_file.executable
-    )
+    executable_files = tuple(changed_file for changed_file in included_files if changed_file.executable)
+
     return ReviewContext(
         pr=ReviewPayload(number=number, head_sha=head_sha, base_sha=base_sha),
         base_ref=base_value,
@@ -69,6 +68,7 @@ def _resolve_refs(
 ) -> tuple[str, str, int | None, bool]:
     resolved_base = base_ref or "origin/main"
     resolved_head = head_ref or "HEAD"
+
     if event_payload and "pull_request" in event_payload:
         pull_request = event_payload.get("pull_request")
         if isinstance(pull_request, dict):
@@ -88,21 +88,17 @@ def _resolve_refs(
 
 def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> tuple[ChangedFile, ...]:
     diff_ref = f"{base_ref}...{head_ref}"
-    name_status_lines = _git_lines(config.repo_root, ["diff", "--name-status", diff_ref])
-    full_patch_by_path = _split_patch_by_path(_git_output(config.repo_root, ["diff", "--unified=3", diff_ref]))
+    name_status_by_path = _load_name_status_by_path(config.repo_root, diff_ref)
     changed_files: list[ChangedFile] = []
 
-    for line in name_status_lines:
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status = parts[0]
-        old_path = parts[1] if status.startswith(("R", "C")) and len(parts) > 2 else None
-        path = parts[-1]
-        full_patch = full_patch_by_path.get(path, "")
+    for path, full_patch in _iter_patch_blocks(
+        _git_output(config.repo_root, ["diff", "--unified=3", diff_ref])
+    ):
+        status, old_path = name_status_by_path.get(path, ("M", None))
         line_spans = tuple(_parse_line_spans(full_patch))
         performance_sensitive = _is_performance_sensitive(config, path, full_patch)
         patch, patch_truncated = _truncate_patch_for_storage(full_patch)
+
         changed_files.append(
             ChangedFile(
                 path=path,
@@ -114,6 +110,25 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
                 old_path=old_path,
                 performance_sensitive=performance_sensitive,
                 patch_truncated=patch_truncated,
+            )
+        )
+
+    patched_paths = {changed_file.path for changed_file in changed_files}
+    for path, (status, old_path) in name_status_by_path.items():
+        if path in patched_paths:
+            continue
+
+        changed_files.append(
+            ChangedFile(
+                path=path,
+                status=status,
+                patch="",
+                line_spans=(),
+                executable=_is_executable_path(path),
+                categories=tuple(_categorize_path(path)),
+                old_path=old_path,
+                performance_sensitive=_is_performance_sensitive(config, path, ""),
+                patch_truncated=False,
             )
         )
 
@@ -177,31 +192,55 @@ def _parse_line_spans(patch_text: str) -> list[LineSpan]:
 
     if current_line is not None:
         flush_current_hunk()
+
     return spans
 
 
-def _split_patch_by_path(patch_text: str) -> dict[str, str]:
-    blocks: dict[str, str] = {}
+def _load_name_status_by_path(repo_root: Path, diff_ref: str) -> dict[str, tuple[str, str | None]]:
+    name_status_by_path: dict[str, tuple[str, str | None]] = {}
+
+    for line in _git_lines(repo_root, ["diff", "--name-status", diff_ref]):
+        parts = line.split("\t")
+        if not parts:
+            continue
+
+        status = parts[0]
+        old_path = parts[1] if status.startswith(("R", "C")) and len(parts) > 2 else None
+        path = parts[-1]
+        name_status_by_path[path] = (status, old_path)
+
+    return name_status_by_path
+
+
+def _iter_patch_blocks(patch_text: str) -> list[tuple[str, str]]:
+    blocks: list[tuple[str, str]] = []
     current_lines: list[str] = []
 
     for line in patch_text.splitlines():
         if line.startswith("diff --git "):
-            _store_patch_block(blocks, current_lines)
+            block = _patch_block_from_lines(current_lines)
+            if block is not None:
+                blocks.append(block)
             current_lines = [line]
             continue
+
         if current_lines:
             current_lines.append(line)
 
-    _store_patch_block(blocks, current_lines)
+    block = _patch_block_from_lines(current_lines)
+    if block is not None:
+        blocks.append(block)
+
     return blocks
 
 
-def _store_patch_block(blocks: dict[str, str], lines: list[str]) -> None:
+def _patch_block_from_lines(lines: list[str]) -> tuple[str, str] | None:
     if not lines:
-        return
+        return None
 
     old_path: str | None = None
     new_path: str | None = None
+
     for line in lines:
         if line.startswith("--- "):
             old_path = _normalize_patch_path(line[4:])
@@ -210,8 +249,9 @@ def _store_patch_block(blocks: dict[str, str], lines: list[str]) -> None:
 
     path = new_path if new_path and new_path != "/dev/null" else old_path
     if path is None:
-        return
-    blocks[path] = "\n".join(lines)
+        return None
+
+    return path, "\n".join(lines)
 
 
 def _normalize_patch_path(raw_path: str) -> str:
@@ -233,17 +273,21 @@ def _nested_sha(value: object) -> str | None:
 def _same_repo(base_value: object, head_value: object) -> bool:
     base_full_name = _nested_full_name(base_value)
     head_full_name = _nested_full_name(head_value)
+
     if not base_full_name or not head_full_name:
         return True
+
     return head_full_name == base_full_name
 
 
 def _nested_full_name(value: object) -> str | None:
     if not isinstance(value, dict):
         return None
+
     repo = value.get("repo")
     if not isinstance(repo, dict):
         return None
+
     full_name = repo.get("full_name")
     return str(full_name) if full_name else None
 
@@ -258,12 +302,14 @@ def _optional_int(value: object, default: int | None) -> int | None:
 def _is_performance_sensitive(config: ReviewConfig, path: str, patch: str) -> bool:
     if any(marker in path for marker in config.performance.path_markers):
         return True
+
     return any(marker in patch for marker in config.performance.diff_markers)
 
 
 def _truncate_patch_for_storage(patch: str) -> tuple[str, bool]:
     if len(patch) <= MAX_STORED_PATCH_CHARS:
         return patch, False
+
     available = max(0, MAX_STORED_PATCH_CHARS - len(_PATCH_TRUNCATION_MARKER))
     trimmed = patch[:available].rstrip("\n")
     return f"{trimmed}{_PATCH_TRUNCATION_MARKER}", True
@@ -278,6 +324,7 @@ def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:
         "src/blokus/engine.py",
         "src/blokus/models.py",
     }
+
     if changed_paths & critical_markers and any(path.startswith(".github/") for path in changed_paths):
         return "critical"
     if changed_paths & critical_markers or any(path.startswith(".github/") for path in changed_paths):
@@ -288,6 +335,7 @@ def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:
         for prefix in ("src/", "scripts/github/", "schemas/", "fixtures/", "tests/")
     ):
         return "moderate"
+
     return "low"
 
 
@@ -300,15 +348,18 @@ def _infer_bias_risks(branch_name: str, commits: list[str]) -> tuple[str, ...]:
         "variable-change-bias",
     ]
     weak_context = " ".join([branch_name, *commits])
+
     if _SELF_DECLARED_RE.search(weak_context):
         risks.insert(0, "self-declared-correctness-bias")
     else:
         risks.append("self-declared-correctness-bias")
+
     return tuple(dict.fromkeys(risks))
 
 
 def _categorize_path(path: str) -> list[str]:
     categories: list[str] = []
+
     if path.endswith(".py"):
         categories.append("python")
     if path.endswith(".sh"):
@@ -323,6 +374,7 @@ def _categorize_path(path: str) -> list[str]:
         categories.append("test")
     if path.startswith("docs/") or path.endswith(".md"):
         categories.append("docs")
+
     return categories
 
 

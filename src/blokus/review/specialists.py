@@ -10,7 +10,7 @@ from blokus.review.config import ReviewConfig
 from blokus.review.prompts import load_prompt
 from blokus.review.provider import OpenRouterClient
 from blokus.review.types import ChangedFile, Finding, ReviewContext, SpecialistResponse, UncertainRisk, stable_finding_id
-
+from functools import cached_property
 
 @dataclass(frozen=True)
 class SpecialistRunner:
@@ -19,6 +19,21 @@ class SpecialistRunner:
     config: ReviewConfig
     provider: OpenRouterClient
 
+    @cached_property
+    def _common_prompt(self) -> str:
+        return load_prompt(self.config, "review-common")
+
+    @cached_property
+    def _specialist_prompts(self) -> dict[str, str]:
+        return {
+
+            "correctness": load_prompt(self.config, "review-correctness"),
+
+            "tests": load_prompt(self.config, "review-tests"),
+
+            "performance": load_prompt(self.config, "review-performance"),
+
+        }
     def run(
         self,
         specialist: str,
@@ -29,9 +44,14 @@ class SpecialistRunner:
         if not files:
             return SpecialistResponse(findings=(), note="No relevant files were available for this specialist.")
 
-        common_prompt = load_prompt(self.config, "review-common")
-        specialist_prompt = load_prompt(self.config, f"review-{specialist}")
-        system_prompt = f"{common_prompt}\n\n{specialist_prompt}"
+        #common_prompt = load_prompt(self.config, "review-common")
+        #specialist_prompt = load_prompt(self.config, f"review-{specialist}")
+        #system_prompt = f"{common_prompt}\n\n{specialist_prompt}"
+        specialist_prompt = self._specialist_prompts.get(specialist)
+        if specialist_prompt is None:
+            specialist_prompt = load_prompt(self.config, f"review-{specialist}")
+
+        system_prompt = f"{self._common_prompt}\n\n{specialist_prompt}"
         user_prompt = _build_user_prompt(specialist, context, files, rendered_diff)
         raw_response = self.provider.complete(
             model=self.config.model_for(specialist),

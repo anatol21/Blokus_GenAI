@@ -835,6 +835,28 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(limited, [findings[0]])
 
+    def test_script_resolve_repo_root_is_independent_of_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+                os.environ,
+                {},
+                clear=True,
+        ):
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+
+                self.assertEqual(agentic_code_review._resolve_repo_root(), REPO_ROOT)
+            finally:
+                os.chdir(original_cwd)
+
+    def test_script_resolve_repo_root_prefers_github_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
+                os.environ,
+                {"GITHUB_WORKSPACE": tmpdir},
+                clear=True,
+        ):
+            self.assertEqual(agentic_code_review._resolve_repo_root(), Path(tmpdir).resolve())
+
     def test_script_main_writes_artifacts_and_sets_exit_code(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/engine.py", line_start=8, line_end=8))
