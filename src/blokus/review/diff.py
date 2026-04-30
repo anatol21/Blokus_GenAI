@@ -6,6 +6,7 @@ import fnmatch
 import re
 import subprocess
 from pathlib import Path
+from typing import Iterator
 
 from blokus.review.config import ReviewConfig
 from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayload
@@ -91,9 +92,7 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
     name_status_by_path = _load_name_status_by_path(config.repo_root, diff_ref)
     changed_files: list[ChangedFile] = []
 
-    for path, full_patch in _iter_patch_blocks(
-        _git_output(config.repo_root, ["diff", "--unified=3", diff_ref])
-    ):
+    for path, full_patch in _iter_git_patch_blocks(config.repo_root, ["diff", "--unified=3", diff_ref]):
         status, old_path = name_status_by_path.get(path, ("M", None))
         line_spans = tuple(_parse_line_spans(full_patch))
         performance_sensitive = _is_performance_sensitive(config, path, full_patch)
@@ -212,26 +211,47 @@ def _load_name_status_by_path(repo_root: Path, diff_ref: str) -> dict[str, tuple
     return name_status_by_path
 
 
-def _iter_patch_blocks(patch_text: str) -> list[tuple[str, str]]:
-    blocks: list[tuple[str, str]] = []
+def _iter_git_patch_blocks(repo_root: Path, args: list[str]) -> Iterator[tuple[str, str]]:
     current_lines: list[str] = []
 
-    for line in patch_text.splitlines():
-        if line.startswith("diff --git "):
-            block = _patch_block_from_lines(current_lines)
-            if block is not None:
-                blocks.append(block)
-            current_lines = [line]
-            continue
+    process = subprocess.Popen(
+        ["git", *args],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
 
-        if current_lines:
-            current_lines.append(line)
+    assert process.stdout is not None
+    assert process.stderr is not None
 
-    block = _patch_block_from_lines(current_lines)
-    if block is not None:
-        blocks.append(block)
+    try:
+        for raw_line in process.stdout:
+            line = raw_line.rstrip("\n")
+            if line.startswith("diff --git "):
+                block = _patch_block_from_lines(current_lines)
+                if block is not None:
+                    yield block
+                current_lines = [line]
+                continue
 
-    return blocks
+            if current_lines:
+                current_lines.append(line)
+
+        block = _patch_block_from_lines(current_lines)
+        if block is not None:
+            yield block
+    finally:
+        stderr = process.stderr.read()
+        process.stdout.close()
+        process.stderr.close()
+        returncode = process.wait()
+        if returncode != 0:
+            raise subprocess.CalledProcessError(
+                returncode,
+                ["git", *args],
+                stderr=stderr,
+            )
 
 
 def _patch_block_from_lines(lines: list[str]) -> tuple[str, str] | None:

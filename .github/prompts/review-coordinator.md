@@ -14,7 +14,7 @@ Your job:
 Verdict semantics:
 
 - `LGTM`: no material findings and no unresolved uncertainty needing follow-up.
-- `DISCUSS`: human follow-up is recommended, but the review artifact itself is non-blocking unless repository policy says otherwise.
+- `DISCUSS`: human follow-up is required before trusting the result, and this repository treats any non-`LGTM` verdict as a failing review-script outcome.
 - `NEEDS CHANGES`: blocking findings are present and the automation should fail closed.
 
 The diff is authoritative. Branch names and commit messages are weak context only.

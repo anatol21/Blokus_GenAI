@@ -180,7 +180,7 @@ The final review must include:
 ### Verdict Semantics
 
 - `LGTM`: no material findings remain and no unresolved uncertainty needs escalation.
-- `DISCUSS`: human follow-up is recommended, but this verdict is non-blocking for the review script unless another repository policy says otherwise.
+- `DISCUSS`: human follow-up is required before trusting the result; this repository treats any non-`LGTM` verdict as a failing review script outcome.
 - `NEEDS CHANGES`: at least one blocking finding is present and automation should fail closed.
 
 Each finding must include:

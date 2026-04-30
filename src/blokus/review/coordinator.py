@@ -155,15 +155,20 @@ class ReviewCoordinator:
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk], bool]:
+        rendered_blocks = {
+            changed_file.path: _render_patch_block(changed_file)
+            for changed_file in context.changed_files
+            if changed_file.patch
+        }
         all_changed_diff = (
             _RenderedDiffBundle(text=context.raw_diff, truncated=False)
             if context.raw_diff
-            else _render_diff_bundle(context.changed_files)
+            else _render_diff_bundle(context.changed_files, rendered_blocks)
         )
         executable_diff = (
             all_changed_diff
             if context.changed_files == context.executable_files
-            else _render_diff_bundle(context.executable_files)
+            else _render_diff_bundle(context.executable_files, rendered_blocks)
         )
         correctness = self._run_specialist(
             "correctness",
@@ -293,13 +298,19 @@ def _is_valid_finding(finding: Finding) -> bool:
     )
 
 
-def _render_diff_bundle(files: tuple[ChangedFile, ...]) -> _RenderedDiffBundle:
+def _render_diff_bundle(
+    files: tuple[ChangedFile, ...],
+    rendered_blocks: dict[str, tuple[str, bool]] | None = None,
+) -> _RenderedDiffBundle:
     blocks: list[str] = []
     total_length = 0
     truncated = False
 
     for changed_file in files:
-        block, block_truncated = _render_patch_block(changed_file)
+        if rendered_blocks is None:
+            block, block_truncated = _render_patch_block(changed_file)
+        else:
+            block, block_truncated = rendered_blocks.get(changed_file.path, ("", False))
         if not block:
             continue
         separator = "\n\n" if blocks else ""

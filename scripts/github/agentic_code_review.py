@@ -51,7 +51,7 @@ def main() -> int:
             )
 
     print(run.markdown)
-    return 1 if run.result.verdict == "NEEDS CHANGES" else 0
+    return 0 if run.result.verdict == "LGTM" else 1
 
 
 def _parse_args() -> argparse.Namespace:
@@ -81,12 +81,14 @@ def _env_int(name: str) -> int | None:
     except ValueError:
         return None
 
+
 def _resolve_repo_root() -> Path:
     workspace = os.environ.get("GITHUB_WORKSPACE")
     if workspace:
         return Path(workspace).resolve()
 
     return Path(__file__).resolve().parents[2]
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

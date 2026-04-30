@@ -176,23 +176,18 @@ class StaticAnalyzer:
             end_location = entry.get("end_location")
             if not isinstance(location, dict) or not isinstance(end_location, dict):
                 continue
-            #path = str(entry["filename"])
-            #line_number = int(location["row"])
-            #changed_file = _lookup_changed_file(context, path, line_number)
             path = _normalize_tool_path(entry.get("filename"), self.config.repo_root)
             line_number = _positive_int(location.get("row"))
-            line_end = _positive_int(end_location.get("row")) or line_number
             if path is None or line_number is None:
                 continue
+            line_end = _positive_int(end_location.get("row"))
+            if line_end is None:
+                line_end = line_number
 
-            #changed_file = _lookup_changed_file(context, path, line_number)
-            changed_file = _lookup_changed_file(context, _normalize_tool_path(path, self.config.repo_root) or path,
-                                                line_number)
+            changed_file = _lookup_changed_file(context, path, line_number)
             if changed_file is None:
                 continue
 
-            #code = str(entry["code"])
-            #message = str(entry["message"])
             code = str(entry.get("code") or "unknown")
             message = str(entry.get("message") or "Ruff reported a diagnostic.")
 
@@ -207,7 +202,6 @@ class StaticAnalyzer:
                     category="static-analysis",
                     file=path,
                     line_start=line_number,
-                    #line_end=int(end_location["row"]),
                     line_end=max(line_number, line_end),
                     evidence=f"`ruff check` reported `{code}` on a changed line: {message}",
                     impact="The changed code includes a lint diagnostic that may indicate an executable defect or maintenance hazard.",
@@ -224,11 +218,12 @@ class StaticAnalyzer:
             match = _MYPY_RE.match(raw_line.strip())
             if not match or match.group("kind") != "error":
                 continue
-            path = str(Path(match.group("file")).as_posix())
+            #path = str(Path(match.group("file")).as_posix())
+            path = _normalize_tool_path(match.group("file"), self.config.repo_root)
+            if path is None:
+                continue
             line_number = int(match.group("line"))
-            #changed_file = _lookup_changed_file(context, path, line_number)
-            changed_file = _lookup_changed_file(context, _normalize_tool_path(path, self.config.repo_root) or path,
-                                                line_number)
+            changed_file = _lookup_changed_file(context, path, line_number)
             if changed_file is None:
                 continue
             message = match.group("message")
@@ -256,7 +251,11 @@ class StaticAnalyzer:
             return []
         findings: list[Finding] = []
         for match in _COMPILEALL_RE.finditer("\n".join([tool_run.stdout, tool_run.stderr])):
-            path = str(Path(match.group("file")).as_posix())
+            path = _normalize_tool_path(match.group("file"), self.config.repo_root)
+            if path is None:
+              continue
+
+
             line_number = int(match.group("line"))
             changed_file = _lookup_changed_file(context, path, line_number)
             if changed_file is None:
@@ -289,8 +288,10 @@ class StaticAnalyzer:
             match = _BASH_RE.match(raw_line.strip())
             if not match:
                 continue
-            path = str(Path(match.group("file")).as_posix())
-            line_number = int(match.group("line"))
+            path = _normalize_tool_path(match.group("file"), self.config.repo_root)
+            line_number = _positive_int(match.group("line"))
+            if path is None or line_number is None:
+                continue
             changed_file = shell_by_path.get(path)
             if changed_file is None or not changed_file.touches_line(line_number):
                 continue
@@ -327,8 +328,10 @@ class StaticAnalyzer:
         for comment in comments:
             if not isinstance(comment, dict):
                 continue
-            path = str(Path(comment["file"]).as_posix())
-            line_number = int(comment["line"])
+            path = _normalize_tool_path(comment.get("file"), self.config.repo_root)
+            line_number = _positive_int(comment.get("line"))
+            if path is None or line_number is None:
+                continue
             changed_file = shell_by_path.get(path)
             if changed_file is None or not changed_file.touches_line(line_number):
                 continue
@@ -561,13 +564,14 @@ def _coerce_stream_text(value: bytes | str | None) -> str:
         return value.decode("utf-8", errors="replace")
     return value
 
+
 def _positive_int(value: object) -> int | None:
     try:
-
         parsed = int(str(value))
     except (TypeError, ValueError):
         return None
     return parsed if parsed >= 1 else None
+
 
 def _normalize_tool_path(value: object, repo_root: Path) -> str | None:
     if value is None:
@@ -575,14 +579,13 @@ def _normalize_tool_path(value: object, repo_root: Path) -> str | None:
     path = Path(str(value))
     try:
         if path.is_absolute():
-          path = path.resolve().relative_to(repo_root.resolve())
+            path = path.resolve().relative_to(repo_root.resolve())
     except ValueError:
         pass
     return path.as_posix()
 
 
 def _lookup_changed_file(context: ReviewContext, path: str, line_number: int) -> ChangedFile | None:
-    #normalized_path = str(Path(path).as_posix())
     normalized_path = Path(path).as_posix()
     for changed_file in context.changed_files:
         if changed_file.path != normalized_path:

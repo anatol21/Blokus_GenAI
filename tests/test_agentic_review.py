@@ -185,8 +185,8 @@ class AgenticReviewTests(unittest.TestCase):
 
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/demo.py"]), mock.patch.object(
             review_diff,
-            "_git_output",
-            return_value=patch_text,
+            "_iter_git_patch_blocks",
+            return_value=[("src/demo.py", patch_text)],
         ) as git_output:
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -212,8 +212,8 @@ class AgenticReviewTests(unittest.TestCase):
 
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/review/diff.py"]), mock.patch.object(
             review_diff,
-            "_git_output",
-            return_value=patch_text,
+            "_iter_git_patch_blocks",
+            return_value=[("src/blokus/review/diff.py", patch_text)],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -256,8 +256,8 @@ class AgenticReviewTests(unittest.TestCase):
 
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/demo.py"]), mock.patch.object(
             review_diff,
-            "_git_output",
-            return_value=patch_text,
+            "_iter_git_patch_blocks",
+            return_value=[("src/demo.py", patch_text)],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -318,6 +318,23 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].line_start, 12)
+
+    def test_mypy_parser_normalizes_absolute_paths(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
+        analyzer = StaticAnalyzer(config)
+        absolute_path = str((REPO_ROOT / "src" / "blokus" / "engine.py").resolve())
+        tool_run = ToolRun(
+            command="mypy src/blokus/engine.py",
+            returncode=1,
+            stdout=f"{absolute_path}:12: error: Incompatible return value type\n",
+            stderr="",
+        )
+
+        findings = analyzer._parse_mypy(context, tool_run)
+
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].file, "src/blokus/engine.py")
 
     def test_specialist_response_drops_findings_outside_changed_lines(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
@@ -602,8 +619,8 @@ class AgenticReviewTests(unittest.TestCase):
 
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/engine.py"]), mock.patch.object(
             review_diff,
-            "_git_output",
-            return_value=patch_text,
+            "_iter_git_patch_blocks",
+            return_value=[("src/blokus/engine.py", patch_text)],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -629,8 +646,8 @@ class AgenticReviewTests(unittest.TestCase):
 
         with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/review/diff.py"]), mock.patch.object(
             review_diff,
-            "_git_output",
-            return_value=patch_text,
+            "_iter_git_patch_blocks",
+            return_value=[("src/blokus/review/diff.py", patch_text)],
         ):
             changed_files = review_diff._load_changed_files(config, "base", "head")
 
@@ -678,6 +695,39 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertIn("src/blokus/engine.py", captured[0][2])
         self.assertNotIn("schemas/agentic_review_output.schema.json", captured[0][2])
         self.assertIn("schemas/agentic_review_output.schema.json", captured[1][2])
+
+    def test_coordinator_renders_each_patch_block_once_for_cached_bundles(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=8, line_end=8),
+            _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
+            raw_diff="",
+        )
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        with mock.patch(
+            "blokus.review.coordinator._render_patch_block",
+            side_effect=lambda changed_file: (f"File: {changed_file.path}\n```diff\n{changed_file.patch.strip()}\n```", False),
+        ) as render_patch_block:
+            coordinator._run_specialists(
+                cast(SpecialistRunner, FakeRunner()),
+                context,
+                [],
+                [],
+                performance_requested=True,
+            )
+
+        self.assertEqual(render_patch_block.call_count, 2)
 
     def test_coordinator_bounds_rendered_diff_bundles_for_specialists(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -932,7 +982,7 @@ class AgenticReviewTests(unittest.TestCase):
             self.assertEqual((Path(tmpdir) / "review.md").read_text(encoding="utf-8"), "## Agentic Code Review\n")
             client_cls.return_value.upsert_issue_comment.assert_called_once()
 
-    def test_script_main_uses_environment_overrides_and_discuss_exits_zero(self) -> None:
+    def test_script_main_uses_environment_overrides_and_discuss_exits_nonzero(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8), same_repo=False)
         result = ReviewResult(
@@ -993,7 +1043,7 @@ class AgenticReviewTests(unittest.TestCase):
             coordinator_cls.return_value.run.return_value = run
             exit_code = agentic_code_review.main()
 
-            self.assertEqual(exit_code, 0)
+            self.assertEqual(exit_code, 1)
             self.assertEqual(
                 coordinator_cls.return_value.run.call_args.kwargs,
                 {
