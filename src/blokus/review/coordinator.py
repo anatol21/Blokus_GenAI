@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
 import subprocess
 from dataclasses import dataclass
 
@@ -170,36 +171,34 @@ class ReviewCoordinator:
             if context.changed_files == context.executable_files
             else _render_diff_bundle(context.executable_files, rendered_blocks)
         )
-        correctness = self._run_specialist(
-            "correctness",
-            specialist_runner,
-            context,
-            context.executable_files,
-            executable_diff.text,
-        )
-        tests = self._run_specialist(
-            "tests",
-            specialist_runner,
-            context,
-            context.changed_files,
-            all_changed_diff.text,
-        )
-
-        findings.extend(correctness.findings)
-        findings.extend(tests.findings)
-        uncertain_risks.extend(correctness.uncertain_risks)
-        uncertain_risks.extend(tests.uncertain_risks)
-
+        specialist_specs: list[tuple[str, tuple[ChangedFile, ...], str]] = [
+            ("correctness", context.executable_files, executable_diff.text),
+            ("tests", context.changed_files, all_changed_diff.text),
+        ]
         if performance_requested:
-            performance = self._run_specialist(
-                "performance",
-                specialist_runner,
-                context,
-                context.executable_files,
-                executable_diff.text,
-            )
-            findings.extend(performance.findings)
-            uncertain_risks.extend(performance.uncertain_risks)
+            specialist_specs.append(("performance", context.executable_files, executable_diff.text))
+
+        futures_by_specialist: dict[str, Future[SpecialistResponse]] = {}
+        with ThreadPoolExecutor(max_workers=len(specialist_specs)) as executor:
+            for specialist, files, rendered_diff in specialist_specs:
+                futures_by_specialist[specialist] = executor.submit(
+                    self._run_specialist,
+                    specialist,
+                    specialist_runner,
+                    context,
+                    files,
+                    rendered_diff,
+                )
+
+            # Merge results in a stable specialist order even though the provider
+            # requests themselves run in parallel.
+            for specialist, _, _ in specialist_specs:
+                try:
+                    response = futures_by_specialist[specialist].result()
+                except Exception as exc:
+                    response = _specialist_failure_response(specialist, exc)
+                findings.extend(response.findings)
+                uncertain_risks.extend(response.uncertain_risks)
 
         return findings, uncertain_risks, all_changed_diff.truncated or executable_diff.truncated
 

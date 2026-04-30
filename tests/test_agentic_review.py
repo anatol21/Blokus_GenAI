@@ -3,11 +3,13 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from dataclasses import replace
+from email.message import Message
 from pathlib import Path
 from typing import cast
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from unittest import mock
 
 import blokus.review.coordinator as review_coordinator
@@ -699,7 +701,7 @@ class AgenticReviewTests(unittest.TestCase):
             _changed_file("src/blokus/engine.py", line_start=8, line_end=8),
             _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
         )
-        captured: list[tuple[str, tuple[str, ...], str]] = []
+        captured: dict[str, tuple[tuple[str, ...], str]] = {}
 
         class FakeRunner:
             def run(
@@ -709,7 +711,7 @@ class AgenticReviewTests(unittest.TestCase):
                 files: tuple[ChangedFile, ...],
                 rendered_diff: str,
             ) -> SpecialistResponse:
-                captured.append((specialist, tuple(changed_file.path for changed_file in files), rendered_diff))
+                captured[specialist] = (tuple(changed_file.path for changed_file in files), rendered_diff)
                 return SpecialistResponse(findings=(), uncertain_risks=(), note="")
 
         findings, uncertain_risks, truncated = coordinator._run_specialists(
@@ -722,16 +724,54 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(findings, [])
         self.assertEqual(uncertain_risks, [])
-        self.assertEqual(
-            [item[0] for item in captured],
-            ["correctness", "tests", "performance"],
-        )
+        self.assertEqual(set(captured), {"correctness", "tests", "performance"})
         self.assertFalse(truncated)
-        self.assertIs(captured[0][2], captured[2][2])
-        self.assertEqual(captured[1][2], context.raw_diff)
-        self.assertIn("src/blokus/engine.py", captured[0][2])
-        self.assertNotIn("schemas/agentic_review_output.schema.json", captured[0][2])
-        self.assertIn("schemas/agentic_review_output.schema.json", captured[1][2])
+        self.assertIs(captured["correctness"][1], captured["performance"][1])
+        self.assertEqual(captured["tests"][1], context.raw_diff)
+        self.assertIn("src/blokus/engine.py", captured["correctness"][1])
+        self.assertNotIn("schemas/agentic_review_output.schema.json", captured["correctness"][1])
+        self.assertIn("schemas/agentic_review_output.schema.json", captured["tests"][1])
+
+    def test_coordinator_runs_specialists_concurrently(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=8, line_end=8),
+            _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
+        )
+        expected = 3
+        started: set[str] = set()
+        started_lock = threading.Lock()
+        all_started = threading.Event()
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                with started_lock:
+                    started.add(specialist)
+                    if len(started) == expected:
+                        all_started.set()
+                if not all_started.wait(0.5):
+                    raise AssertionError("Specialists did not start concurrently.")
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=True,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertEqual(uncertain_risks, [])
+        self.assertFalse(truncated)
+        self.assertEqual(started, {"correctness", "tests", "performance"})
 
     def test_coordinator_renders_each_patch_block_once_for_cached_bundles(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -1707,14 +1747,15 @@ class AgenticReviewTests(unittest.TestCase):
             {"choices": [{"message": {"content": "  LGTM  "}}]}
         ).encode("utf-8")
 
-        with mock.patch("blokus.review.provider.time.sleep"), mock.patch(
+        with mock.patch("blokus.review.provider._sleep_before_retry") as sleep_mock, mock.patch(
             "blokus.review.provider.urlopen",
-            side_effect=[URLError("temporary failure"), response],
+            side_effect=[URLError("temporary failure"), URLError("temporary failure"), response],
         ) as urlopen_mock:
             result = client.complete(model="gpt", system_prompt="sys", user_prompt="user")
 
         self.assertEqual(result, "LGTM")
-        self.assertEqual(urlopen_mock.call_count, 2)
+        self.assertEqual(urlopen_mock.call_count, 3)
+        sleep_mock.assert_has_calls([mock.call(1), mock.call(2)])
 
     def test_openrouter_client_raises_after_retry_budget_is_exhausted(self) -> None:
         client = OpenRouterClient(
@@ -1732,6 +1773,72 @@ class AgenticReviewTests(unittest.TestCase):
                 client.complete(model="gpt", system_prompt="sys", user_prompt="user")
 
         self.assertEqual(urlopen_mock.call_count, 3)
+
+    def test_openrouter_client_retries_retryable_http_errors(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=2,
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "LGTM"}}]}
+        ).encode("utf-8")
+        retryable_error = HTTPError(
+            "https://openrouter.example/chat/completions",
+            429,
+            "rate limited",
+            hdrs=Message(),
+            fp=None,
+        )
+
+        with mock.patch("blokus.review.provider._sleep_before_retry") as sleep_mock, mock.patch(
+            "blokus.review.provider.urlopen",
+            side_effect=[retryable_error, response],
+        ) as urlopen_mock:
+            result = client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+        self.assertEqual(result, "LGTM")
+        self.assertEqual(urlopen_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(1)
+
+    def test_openrouter_client_does_not_retry_nonretryable_http_errors(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=2,
+        )
+        auth_error = HTTPError(
+            "https://openrouter.example/chat/completions",
+            401,
+            "unauthorized",
+            hdrs=Message(),
+            fp=None,
+        )
+
+        with mock.patch("blokus.review.provider._sleep_before_retry") as sleep_mock, mock.patch(
+            "blokus.review.provider.urlopen",
+            side_effect=[auth_error],
+        ) as urlopen_mock:
+            with self.assertRaisesRegex(ProviderUnavailable, "OpenRouter request failed"):
+                client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+        self.assertEqual(urlopen_mock.call_count, 1)
+        sleep_mock.assert_not_called()
+
+    def test_diff_module_imports_cleanly_in_subprocess(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-c", "import blokus.review.diff"],
+            cwd=REPO_ROOT,
+            env={**os.environ, "PYTHONPATH": "src"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
 
     def _init_git_repo(self, repo_root: Path) -> None:
         self._git(repo_root, "init")

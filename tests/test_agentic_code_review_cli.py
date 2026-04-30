@@ -192,7 +192,7 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, "-m", "scripts.github.agentic_code_review", "--help"],
             cwd=REPO_ROOT,
-            env={**os.environ, "PYTHONPATH": "src"},
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
             capture_output=True,
             text=True,
             check=False,
@@ -200,6 +200,19 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0)
         self.assertIn("Path for the markdown review output", result.stdout)
+
+    def test_script_entrypoint_imports_cleanly_without_pythonpath(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/github/agentic_code_review.py", "--help"],
+            cwd=REPO_ROOT,
+            env={key: value for key, value in os.environ.items() if key != "PYTHONPATH"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Path for the machine-readable review output", result.stdout)
 
 
 if __name__ == "__main__":

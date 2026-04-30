@@ -4,20 +4,28 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 from pathlib import Path
 import sys
-
-from blokus.automation import COMMENT_MARKERS
-from blokus.review.config import load_review_config
-from blokus.review.coordinator import ReviewCoordinator
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+SRC_ROOT = REPO_ROOT / "src"
+for import_root in (str(SRC_ROOT), str(REPO_ROOT)):
+    if import_root not in sys.path:
+        sys.path.insert(0, import_root)
 
-from scripts.github.gh_helpers import GitHubClient, load_event_payload
+_blokus_automation: Any = importlib.import_module("blokus.automation")
+COMMENT_MARKERS = _blokus_automation.COMMENT_MARKERS
+_review_config: Any = importlib.import_module("blokus.review.config")
+load_review_config = _review_config.load_review_config
+_review_coordinator: Any = importlib.import_module("blokus.review.coordinator")
+ReviewCoordinator = _review_coordinator.ReviewCoordinator
+_gh_helpers: Any = importlib.import_module("scripts.github.gh_helpers")
+GitHubClient = _gh_helpers.GitHubClient
+load_event_payload = _gh_helpers.load_event_payload
 
 
 def main() -> int:
