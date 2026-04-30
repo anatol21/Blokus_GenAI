@@ -1,0 +1,64 @@
+name: agentic-code-review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+    inputs:
+      pull_number:
+        description: Optional pull request number when running manually
+        required: false
+        type: string
+      base_ref:
+        description: Optional base ref override
+        required: false
+        type: string
+      head_ref:
+        description: Optional head ref override
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
+      - name: Install review tooling
+        run: . .venv/bin/activate && python -m pip install ruff mypy
+      - name: Run agentic PR review
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          PYTHONPATH: src
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          REVIEW_PULL_NUMBER: ${{ inputs.pull_number }}
+          REVIEW_BASE_REF: ${{ inputs.base_ref }}
+          REVIEW_HEAD_REF: ${{ inputs.head_ref }}
+        run: . .venv/bin/activate && python scripts/github/agentic_code_review.py
+      - name: Publish review summary
+        run: cat artifacts/agentic-review/review.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-review
+          path: artifacts/agentic-review
+          if-no-files-found: error
+          retention-days: 14
