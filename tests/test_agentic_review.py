@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from urllib.error import URLError
@@ -182,6 +183,16 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(git_output.call_count, 1)
         git_output.assert_called_once_with(config.repo_root, ["diff", "--unified=3", "base...head"])
 
+    def test_resolve_refs_falls_back_for_partial_pull_request_payload(self) -> None:
+        resolved = review_diff._resolve_refs(
+            {"pull_request": {"base": {"repo": {"full_name": "owner/repo"}}}},
+            "env-base",
+            "env-head",
+            44,
+        )
+
+        self.assertEqual(resolved, ("env-base", "env-head", 44, True))
+
     def test_static_analyzer_heuristics_flag_cli_gap(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/cli.py", line_start=10, line_end=12))
@@ -303,6 +314,33 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.uncertain_risks, ())
         self.assertTrue(response.note)
 
+    def test_specialist_response_skips_findings_missing_required_keys(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Missing evidence",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "impact": "Should be ignored.",
+                            "suggested_action": "Ignore malformed payloads.",
+                            "blocking_recommendation": True,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(response.findings, ())
+
     def test_specialist_response_ignores_incomplete_findings(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
         response = _parse_specialist_response(
@@ -394,6 +432,24 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(run.result.verdict, "DISCUSS")
         self.assertTrue(run.result.uncertain_risks)
         self.assertIn("OpenRouter review was unavailable", run.result.uncertain_risks[0].risk)
+
+    def test_coordinator_skips_provider_for_forked_pull_requests(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12), same_repo=False)
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=("compileall",), posture="clean")
+        coordinator = ReviewCoordinator(config)
+
+        with mock.patch("blokus.review.coordinator.build_review_context", return_value=context), mock.patch.object(
+            coordinator.static_analyzer,
+            "analyze",
+            return_value=static_report,
+        ), mock.patch("blokus.review.coordinator.OpenRouterClient.from_env") as from_env:
+            run = coordinator.run()
+
+        self.assertEqual(run.result.verdict, "DISCUSS")
+        self.assertEqual(len(run.result.uncertain_risks), 1)
+        self.assertIn("forked `pull_request` runs", run.result.uncertain_risks[0].reason_uncertain)
+        from_env.assert_not_called()
 
     def test_coordinator_gracefully_falls_back_when_refs_are_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -530,6 +586,93 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertIn("src/blokus/engine.py", captured[0][2])
         self.assertNotIn("schemas/agentic_review_output.schema.json", captured[0][2])
         self.assertIn("schemas/agentic_review_output.schema.json", captured[1][2])
+
+    def test_coordinator_dedupes_invalid_and_lower_ranked_findings(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        duplicate_lower = Finding(
+            id="dup-low",
+            title="Duplicate",
+            severity="moderate",
+            confidence="medium",
+            category="correctness",
+            file="src/blokus/engine.py",
+            line_start=12,
+            line_end=12,
+            evidence="Lower-ranked duplicate.",
+            impact="Less serious.",
+            suggested_action="Minor change.",
+            blocking_recommendation=False,
+        )
+        duplicate_higher = Finding(
+            id="dup-high",
+            title="Duplicate",
+            severity="high",
+            confidence="high",
+            category="correctness",
+            file="src/blokus/engine.py",
+            line_start=12,
+            line_end=12,
+            evidence="Higher-ranked duplicate.",
+            impact="More serious.",
+            suggested_action="Critical change.",
+            blocking_recommendation=True,
+        )
+        invalid = Finding(
+            id="invalid",
+            title="",
+            severity="high",
+            confidence="high",
+            category="correctness",
+            file="src/blokus/engine.py",
+            line_start=0,
+            line_end=0,
+            evidence="",
+            impact="",
+            suggested_action="",
+            blocking_recommendation=True,
+        )
+
+        deduped = coordinator._dedupe_and_limit([duplicate_lower, duplicate_higher, invalid])
+
+        self.assertEqual(deduped, [duplicate_higher])
+
+    def test_coordinator_limits_findings_to_configured_maximum(self) -> None:
+        config = replace(_make_config(REPO_ROOT), max_findings=1)
+        coordinator = ReviewCoordinator(config)
+        findings = [
+            Finding(
+                id="finding-1",
+                title="First",
+                severity="high",
+                confidence="high",
+                category="correctness",
+                file="src/blokus/engine.py",
+                line_start=10,
+                line_end=10,
+                evidence="More severe.",
+                impact="Higher priority.",
+                suggested_action="Fix first.",
+                blocking_recommendation=True,
+            ),
+            Finding(
+                id="finding-2",
+                title="Second",
+                severity="moderate",
+                confidence="medium",
+                category="tests",
+                file="tests/test_engine.py",
+                line_start=5,
+                line_end=5,
+                evidence="Less severe.",
+                impact="Lower priority.",
+                suggested_action="Fix later.",
+                blocking_recommendation=False,
+            ),
+        ]
+
+        limited = coordinator._dedupe_and_limit(findings)
+
+        self.assertEqual(limited, [findings[0]])
 
     def test_script_main_writes_artifacts_and_sets_exit_code(self) -> None:
         config = _make_config(REPO_ROOT)

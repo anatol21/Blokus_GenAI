@@ -108,13 +108,25 @@ def _parse_specialist_response(
 ) -> SpecialistResponse:
     data = _load_json_object(raw_response)
     changed_paths = {changed_file.path: changed_file for changed_file in files}
+    required_keys = {
+        "title",
+        "severity",
+        "confidence",
+        "category",
+        "file",
+        "line_start",
+        "line_end",
+        "evidence",
+        "impact",
+        "suggested_action",
+        "blocking_recommendation",
+    }
 
     findings: list[Finding] = []
     for item in _dict_list(data.get("findings")):
-        try:
-            path = str(item["file"])
-        except KeyError:
+        if not required_keys.issubset(item):
             continue
+        path = str(item["file"])
 
         line_start = _int_value(item.get("line_start"))
         line_end = _int_value(item.get("line_end"))

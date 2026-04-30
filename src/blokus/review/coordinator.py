@@ -11,7 +11,7 @@ from blokus.review.provider import OpenRouterClient, ProviderUnavailable
 from blokus.review.renderer import render_review_markdown
 from blokus.review.specialists import SpecialistRunner
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer
-from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
+from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ class ReviewCoordinator:
             findings = list(static_report.findings)
             uncertain_risks = list(static_report.uncertain_risks)
             performance_requested = should_run_performance_review(self.config, context)
-        except subprocess.CalledProcessError as exc:
+        except (subprocess.CalledProcessError, KeyError, TypeError, ValueError) as exc:
             context = _fallback_review_context(event_payload, base_ref, head_ref, pr_number)
             static_report = StaticAnalysisReport(
                 findings=(),
@@ -131,18 +131,25 @@ class ReviewCoordinator:
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk]]:
-        executable_diff = _render_diff_bundle(context.executable_files)
-        correctness = specialist_runner.run(
+        all_changed_diff = context.raw_diff or _render_diff_bundle(context.changed_files)
+        executable_diff = (
+            all_changed_diff
+            if context.changed_files == context.executable_files
+            else _render_diff_bundle(context.executable_files)
+        )
+        correctness = self._run_specialist(
             "correctness",
+            specialist_runner,
             context,
             context.executable_files,
             executable_diff,
         )
-        tests = specialist_runner.run(
+        tests = self._run_specialist(
             "tests",
+            specialist_runner,
             context,
             context.changed_files,
-            context.raw_diff,
+            all_changed_diff,
         )
 
         findings.extend(correctness.findings)
@@ -151,8 +158,9 @@ class ReviewCoordinator:
         uncertain_risks.extend(tests.uncertain_risks)
 
         if performance_requested:
-            performance = specialist_runner.run(
+            performance = self._run_specialist(
                 "performance",
+                specialist_runner,
                 context,
                 context.executable_files,
                 executable_diff,
@@ -161,6 +169,19 @@ class ReviewCoordinator:
             uncertain_risks.extend(performance.uncertain_risks)
 
         return findings, uncertain_risks
+
+    def _run_specialist(
+        self,
+        specialist: str,
+        specialist_runner: SpecialistRunner,
+        context: ReviewContext,
+        files: tuple[ChangedFile, ...],
+        rendered_diff: str,
+    ) -> "SpecialistResponse":
+        try:
+            return specialist_runner.run(specialist, context, files, rendered_diff)
+        except Exception as exc:
+            return _specialist_failure_response(specialist, exc)
 
     def _dedupe_and_limit(self, findings: list[Finding]) -> list[Finding]:
         deduped: dict[tuple[str, str, int, str], Finding] = {}
@@ -248,6 +269,20 @@ def _render_diff_bundle(files: tuple[ChangedFile, ...]) -> str:
         f"File: {changed_file.path}\n```diff\n{changed_file.patch.strip()}\n```"
         for changed_file in files
         if changed_file.patch
+    )
+
+
+def _specialist_failure_response(specialist: str, error: Exception) -> "SpecialistResponse":
+    return SpecialistResponse(
+        findings=(),
+        uncertain_risks=(
+            UncertainRisk(
+                risk=f"{specialist.title()} specialist could not complete this run.",
+                reason_uncertain=str(error),
+                suggested_verification="Rerun the review or inspect the specialist/provider output for malformed data.",
+            ),
+        ),
+        note="",
     )
 
 

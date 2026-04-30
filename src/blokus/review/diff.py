@@ -6,7 +6,7 @@ import fnmatch
 import re
 import subprocess
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TypedDict
 
 from blokus.review.config import ReviewConfig
 from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayload
@@ -53,10 +53,6 @@ def build_review_context(
     executable_files = tuple(
         changed_file for changed_file in included_files if changed_file.executable
     )
-    raw_diff = "\n\n".join(
-        _render_patch_block(changed_file) for changed_file in included_files if changed_file.patch
-    )
-
     return ReviewContext(
         pr=ReviewPayload(number=number, head_sha=head_sha, base_sha=base_sha),
         base_ref=base_value,
@@ -68,7 +64,7 @@ def build_review_context(
         bias_risks=_infer_bias_risks(branch_name, commits),
         same_repo=same_repo,
         executable_files=executable_files,
-        raw_diff=raw_diff,
+        raw_diff="",
     )
 
 
@@ -85,15 +81,22 @@ def _resolve_refs(
     head_ref: str | None,
     pr_number: int | None,
 ) -> tuple[str, str, int | None, bool]:
-    if event_payload and "pull_request" in event_payload:
-        pull_request = cast(_PullRequestPayload, event_payload["pull_request"])
-        base_value = str(pull_request["base"]["sha"])
-        head_value = str(pull_request["head"]["sha"])
-        same_repo = pull_request["head"]["repo"]["full_name"] == pull_request["base"]["repo"]["full_name"]
-        return base_value, head_value, int(pull_request["number"]), bool(same_repo)
-
     resolved_base = base_ref or "origin/main"
     resolved_head = head_ref or "HEAD"
+    if event_payload and "pull_request" in event_payload:
+        pull_request = event_payload.get("pull_request")
+        if isinstance(pull_request, dict):
+            base_value = _nested_sha(pull_request.get("base"))
+            head_value = _nested_sha(pull_request.get("head"))
+            if base_value and head_value:
+                same_repo = _same_repo(pull_request.get("base"), pull_request.get("head"))
+                return (
+                    base_value,
+                    head_value,
+                    _optional_int(pull_request.get("number"), pr_number),
+                    same_repo,
+                )
+
     return resolved_base, resolved_head, pr_number, True
 
 
@@ -216,6 +219,38 @@ def _normalize_patch_path(raw_path: str) -> str:
     if stripped.startswith(("a/", "b/")):
         stripped = stripped[2:]
     return stripped.strip('"')
+
+
+def _nested_sha(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    sha = value.get("sha")
+    return str(sha) if sha else None
+
+
+def _same_repo(base_value: object, head_value: object) -> bool:
+    base_full_name = _nested_full_name(base_value)
+    head_full_name = _nested_full_name(head_value)
+    if not base_full_name or not head_full_name:
+        return True
+    return head_full_name == base_full_name
+
+
+def _nested_full_name(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    repo = value.get("repo")
+    if not isinstance(repo, dict):
+        return None
+    full_name = repo.get("full_name")
+    return str(full_name) if full_name else None
+
+
+def _optional_int(value: object, default: int | None) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _is_performance_sensitive(config: ReviewConfig, path: str, patch: str) -> bool:
