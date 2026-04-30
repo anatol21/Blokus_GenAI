@@ -16,7 +16,6 @@ from gh_helpers import GitHubClient, load_event_payload
 
 def main() -> int:
     args = _parse_args()
-   # config = load_review_config(repo_root=Path.cwd())
     repo_root = _resolve_repo_root()
     config = load_review_config(repo_root=repo_root)
     coordinator = ReviewCoordinator(config)
@@ -82,13 +81,12 @@ def _env_int(name: str) -> int | None:
     except ValueError:
         return None
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 def _resolve_repo_root() -> Path:
     workspace = os.environ.get("GITHUB_WORKSPACE")
     if workspace:
         return Path(workspace).resolve()
 
     return Path(__file__).resolve().parents[2]
+
+if __name__ == "__main__":
+    raise SystemExit(main())
