@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from dataclasses import dataclass
 
 from blokus.review.config import ReviewConfig
@@ -10,7 +11,7 @@ from blokus.review.provider import OpenRouterClient, ProviderUnavailable
 from blokus.review.renderer import render_review_markdown
 from blokus.review.specialists import SpecialistRunner
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer
-from blokus.review.types import Finding, ReviewContext, ReviewResult, ReviewSummary, UncertainRisk
+from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
 
 
 @dataclass(frozen=True)
@@ -39,18 +40,35 @@ class ReviewCoordinator:
         head_ref: str | None = None,
         pr_number: int | None = None,
     ) -> ReviewRun:
-        context = build_review_context(
-            self.config,
-            event_payload=event_payload,
-            base_ref=base_ref,
-            head_ref=head_ref,
-            pr_number=pr_number,
-        )
-        static_report = self.static_analyzer.analyze(context)
-
-        findings = list(static_report.findings)
-        uncertain_risks = list(static_report.uncertain_risks)
-        performance_requested = should_run_performance_review(self.config, context)
+        try:
+            context = build_review_context(
+                self.config,
+                event_payload=event_payload,
+                base_ref=base_ref,
+                head_ref=head_ref,
+                pr_number=pr_number,
+            )
+            static_report = self.static_analyzer.analyze(context)
+            findings = list(static_report.findings)
+            uncertain_risks = list(static_report.uncertain_risks)
+            performance_requested = should_run_performance_review(self.config, context)
+        except subprocess.CalledProcessError as exc:
+            context = _fallback_review_context(event_payload, base_ref, head_ref, pr_number)
+            static_report = StaticAnalysisReport(
+                findings=(),
+                uncertain_risks=(),
+                commands=(),
+                posture="not_run",
+            )
+            findings = []
+            uncertain_risks = [
+                UncertainRisk(
+                    risk="Diff-based review was skipped because the requested refs were unavailable locally.",
+                    reason_uncertain=str(exc),
+                    suggested_verification="Fetch the missing refs or rerun the review in an environment with the required git history.",
+                )
+            ]
+            performance_requested = False
 
         provider_available = False
         provider: OpenRouterClient | None = None
@@ -68,7 +86,7 @@ class ReviewCoordinator:
                         suggested_verification="Restore the OpenRouter credential or rerun the review when the provider is available.",
                     )
                 )
-        elif not context.same_repo:
+        elif not context.same_repo and context.changed_files:
             uncertain_risks.append(
                 UncertainRisk(
                     risk="LLM review was skipped for a forked pull request.",
@@ -113,8 +131,19 @@ class ReviewCoordinator:
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk]]:
-        correctness = specialist_runner.run("correctness", context, context.executable_files)
-        tests = specialist_runner.run("tests", context, context.changed_files)
+        executable_diff = _render_diff_bundle(context.executable_files)
+        correctness = specialist_runner.run(
+            "correctness",
+            context,
+            context.executable_files,
+            executable_diff,
+        )
+        tests = specialist_runner.run(
+            "tests",
+            context,
+            context.changed_files,
+            context.raw_diff,
+        )
 
         findings.extend(correctness.findings)
         findings.extend(tests.findings)
@@ -122,7 +151,12 @@ class ReviewCoordinator:
         uncertain_risks.extend(tests.uncertain_risks)
 
         if performance_requested:
-            performance = specialist_runner.run("performance", context, context.executable_files)
+            performance = specialist_runner.run(
+                "performance",
+                context,
+                context.executable_files,
+                executable_diff,
+            )
             findings.extend(performance.findings)
             uncertain_risks.extend(performance.uncertain_risks)
 
@@ -207,3 +241,98 @@ def _is_valid_finding(finding: Finding) -> bool:
             finding.confidence in {"high", "medium", "low"},
         ]
     )
+
+
+def _render_diff_bundle(files: tuple[ChangedFile, ...]) -> str:
+    return "\n\n".join(
+        f"File: {changed_file.path}\n```diff\n{changed_file.patch.strip()}\n```"
+        for changed_file in files
+        if changed_file.patch
+    )
+
+
+def _fallback_review_context(
+    event_payload: dict[str, object] | None,
+    base_ref: str | None,
+    head_ref: str | None,
+    pr_number: int | None,
+) -> ReviewContext:
+    payload = _fallback_payload(event_payload, base_ref, head_ref, pr_number)
+    return ReviewContext(
+        pr=payload,
+        base_ref=payload.base_sha or base_ref or "origin/main",
+        head_ref=payload.head_sha or head_ref or "HEAD",
+        branch_name="unavailable",
+        commits=(),
+        changed_files=(),
+        impact="moderate",
+        bias_risks=(
+            "self-declared-correctness-bias",
+            "authority-bias",
+            "reverse-authority-bias",
+            "misleading-task-bias",
+            "illusory-complexity-bias",
+            "variable-change-bias",
+        ),
+        same_repo=_fallback_same_repo(event_payload),
+        executable_files=(),
+        raw_diff="",
+    )
+
+
+def _fallback_payload(
+    event_payload: dict[str, object] | None,
+    base_ref: str | None,
+    head_ref: str | None,
+    pr_number: int | None,
+) -> ReviewPayload:
+    pull_request = event_payload.get("pull_request") if isinstance(event_payload, dict) else None
+    if not isinstance(pull_request, dict):
+        return ReviewPayload(
+            number=pr_number,
+            head_sha=head_ref,
+            base_sha=base_ref,
+        )
+
+    base_data = pull_request.get("base")
+    head_data = pull_request.get("head")
+    return ReviewPayload(
+        number=_optional_int(pull_request.get("number"), pr_number),
+        head_sha=_nested_sha(head_data) or head_ref,
+        base_sha=_nested_sha(base_data) or base_ref,
+    )
+
+
+def _fallback_same_repo(event_payload: dict[str, object] | None) -> bool:
+    pull_request = event_payload.get("pull_request") if isinstance(event_payload, dict) else None
+    if not isinstance(pull_request, dict):
+        return True
+    base_full_name = _nested_full_name(pull_request.get("base"))
+    head_full_name = _nested_full_name(pull_request.get("head"))
+    if not base_full_name or not head_full_name:
+        return True
+    return head_full_name == base_full_name
+
+
+def _nested_sha(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    sha = value.get("sha")
+    return str(sha) if sha else None
+
+
+def _nested_full_name(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    repo = value.get("repo")
+    if not isinstance(repo, dict):
+        return None
+    full_name = repo.get("full_name")
+    return str(full_name) if full_name else None
+
+
+def _optional_int(value: object, default: int | None) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return default

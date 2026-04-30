@@ -19,14 +19,20 @@ class SpecialistRunner:
     config: ReviewConfig
     provider: OpenRouterClient
 
-    def run(self, specialist: str, context: ReviewContext, files: tuple[ChangedFile, ...]) -> SpecialistResponse:
+    def run(
+        self,
+        specialist: str,
+        context: ReviewContext,
+        files: tuple[ChangedFile, ...],
+        rendered_diff: str,
+    ) -> SpecialistResponse:
         if not files:
             return SpecialistResponse(findings=(), note="No relevant files were available for this specialist.")
 
         common_prompt = load_prompt(self.config, "review-common")
         specialist_prompt = load_prompt(self.config, f"review-{specialist}")
         system_prompt = f"{common_prompt}\n\n{specialist_prompt}"
-        user_prompt = _build_user_prompt(specialist, context, files)
+        user_prompt = _build_user_prompt(specialist, context, files, rendered_diff)
         raw_response = self.provider.complete(
             model=self.config.model_for(specialist),
             system_prompt=system_prompt,
@@ -35,11 +41,13 @@ class SpecialistRunner:
         return _parse_specialist_response(raw_response, specialist, files)
 
 
-def _build_user_prompt(specialist: str, context: ReviewContext, files: tuple[ChangedFile, ...]) -> str:
+def _build_user_prompt(
+    specialist: str,
+    context: ReviewContext,
+    files: tuple[ChangedFile, ...],
+    rendered_diff: str,
+) -> str:
     file_list = "\n".join(f"- {changed_file.path}" for changed_file in files)
-    patches = "\n\n".join(
-        f"File: {changed_file.path}\n```diff\n{changed_file.patch.strip()}\n```" for changed_file in files
-    )
     commit_block = "\n".join(f"- {commit}" for commit in context.commits) or "- none"
     bias_block = "\n".join(f"- {risk}" for risk in context.bias_risks)
 
@@ -89,7 +97,7 @@ Return JSON in this exact shape:
 Review only changed code. Do not exceed 3 findings.
 
 Diff:
-{patches}
+{rendered_diff}
 """.strip()
 
 
@@ -176,4 +184,7 @@ def _load_json_object(raw_response: str) -> dict[str, object]:
         end = raw_response.rfind("}")
         if start == -1 or end == -1 or end <= start:
             return {"findings": [], "uncertain_risks": [], "note": "Invalid non-JSON specialist response."}
-        return json.loads(raw_response[start : end + 1])
+        try:
+            return json.loads(raw_response[start : end + 1])
+        except json.JSONDecodeError:
+            return {"findings": [], "uncertain_risks": [], "note": "Invalid non-JSON specialist response."}

@@ -14,9 +14,9 @@ from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderCon
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
-from blokus.review.specialists import _parse_specialist_response
+from blokus.review.specialists import SpecialistRunner, _parse_specialist_response
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer, ToolRun
-from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
+from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,7 +105,11 @@ def _review_context(*changed_files: ChangedFile, same_repo: bool = True) -> Revi
         bias_risks=("self-declared-correctness-bias", "misleading-task-bias"),
         same_repo=same_repo,
         executable_files=executable_files,
-        raw_diff="\n".join(item.patch for item in changed_files),
+        raw_diff="\n\n".join(
+            f"File: {item.path}\n```diff\n{item.patch.strip()}\n```"
+            for item in changed_files
+            if item.patch
+        ),
     )
 
 
@@ -287,6 +291,18 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.uncertain_risks, ())
         self.assertEqual(response.note, "Invalid non-JSON specialist response.")
 
+    def test_specialist_response_handles_invalid_embedded_json(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            'Here is a draft:\n{ "findings": [ }\n```',
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(response.findings, ())
+        self.assertEqual(response.uncertain_risks, ())
+        self.assertTrue(response.note)
+
     def test_specialist_response_ignores_incomplete_findings(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
         response = _parse_specialist_response(
@@ -379,27 +395,141 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertTrue(run.result.uncertain_risks)
         self.assertIn("OpenRouter review was unavailable", run.result.uncertain_risks[0].risk)
 
-    def test_should_run_performance_review_triggers_for_marker_path(self) -> None:
+    def test_coordinator_gracefully_falls_back_when_refs_are_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
-        context = _review_context(
-            _changed_file("src/blokus/engine.py", line_start=8, line_end=8, performance_sensitive=True)
+        coordinator = ReviewCoordinator(config)
+        event_payload = cast(
+            dict[str, object],
+            {
+            "pull_request": {
+                "number": 44,
+                "base": {
+                    "sha": "base-sha",
+                    "repo": {"full_name": "owner/repo"},
+                },
+                "head": {
+                    "sha": "head-sha",
+                    "repo": {"full_name": "owner/repo"},
+                },
+            }
+        },
+        )
+        schema = json.loads((REPO_ROOT / "schemas" / "agentic_review_output.schema.json").read_text(encoding="utf-8"))
+
+        with mock.patch(
+            "blokus.review.coordinator.build_review_context",
+            side_effect=subprocess.CalledProcessError(128, ["git", "rev-parse", "base-sha"], stderr="fatal: bad object"),
+        ), mock.patch.object(coordinator.static_analyzer, "analyze") as analyze_mock:
+            run = coordinator.run(event_payload=event_payload)
+
+        self.assertEqual(run.result.verdict, "DISCUSS")
+        self.assertEqual(run.static_report.posture, "not_run")
+        self.assertEqual(run.result.summary.static_analysis_posture, "not_run")
+        self.assertEqual(run.result.summary.performance_posture, "not_applicable")
+        self.assertEqual(run.context.pr.number, 44)
+        self.assertEqual(run.context.base_ref, "base-sha")
+        self.assertEqual(run.context.head_ref, "head-sha")
+        self.assertEqual(run.context.branch_name, "unavailable")
+        self.assertFalse(run.result.findings)
+        self.assertEqual(len(run.result.uncertain_risks), 1)
+        self.assertIn("refs were unavailable", run.result.uncertain_risks[0].risk)
+        self.assertIn("### Uncertain Risks", run.markdown)
+        self._assert_review_payload_matches_schema(run.result.to_dict(), schema)
+        analyze_mock.assert_not_called()
+
+    def test_should_run_performance_review_uses_derived_marker_path(self) -> None:
+        config = _make_config(REPO_ROOT)
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/blokus/engine.py b/src/blokus/engine.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/blokus/engine.py",
+                "+++ b/src/blokus/engine.py",
+                "@@ -10,3 +10,3 @@",
+                " old",
+                "-value = old()",
+                "+value = new()",
+                " done",
+            ]
         )
 
+        with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/engine.py"]), mock.patch.object(
+            review_diff,
+            "_git_output",
+            return_value=patch_text,
+        ):
+            changed_files = review_diff._load_changed_files(config, "base", "head")
+
+        self.assertTrue(changed_files[0].performance_sensitive)
+        context = _review_context(*changed_files)
         self.assertTrue(should_run_performance_review(config, context))
 
-    def test_should_run_performance_review_triggers_for_diff_marker(self) -> None:
+    def test_should_run_performance_review_uses_derived_diff_marker(self) -> None:
         config = _make_config(REPO_ROOT)
-        context = _review_context(
-            _changed_file(
-                "src/blokus/review/diff.py",
-                line_start=10,
-                line_end=12,
-                patch="@@ -0,0 +10,3 @@\n+for item in items:\n+    cache[key] = item\n+return cache\n",
-                performance_sensitive=True,
-            )
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/blokus/review/diff.py b/src/blokus/review/diff.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/blokus/review/diff.py",
+                "+++ b/src/blokus/review/diff.py",
+                "@@ -10,3 +10,3 @@",
+                " setup",
+                "-value = old()",
+                "+for item in cache:",
+                " finish",
+            ]
         )
 
+        with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/review/diff.py"]), mock.patch.object(
+            review_diff,
+            "_git_output",
+            return_value=patch_text,
+        ):
+            changed_files = review_diff._load_changed_files(config, "base", "head")
+
+        self.assertTrue(changed_files[0].performance_sensitive)
+        context = _review_context(*changed_files)
         self.assertTrue(should_run_performance_review(config, context))
+
+    def test_coordinator_reuses_precomputed_diff_bundles_for_specialists(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=8, line_end=8),
+            _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
+        )
+        captured: list[tuple[str, tuple[str, ...], str]] = []
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                captured.append((specialist, tuple(changed_file.path for changed_file in files), rendered_diff))
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=True,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertEqual(uncertain_risks, [])
+        self.assertEqual(
+            [item[0] for item in captured],
+            ["correctness", "tests", "performance"],
+        )
+        self.assertIs(captured[0][2], captured[2][2])
+        self.assertEqual(captured[1][2], context.raw_diff)
+        self.assertIn("src/blokus/engine.py", captured[0][2])
+        self.assertNotIn("schemas/agentic_review_output.schema.json", captured[0][2])
+        self.assertIn("schemas/agentic_review_output.schema.json", captured[1][2])
 
     def test_script_main_writes_artifacts_and_sets_exit_code(self) -> None:
         config = _make_config(REPO_ROOT)

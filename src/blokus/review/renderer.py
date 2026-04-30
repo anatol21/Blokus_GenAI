@@ -60,6 +60,8 @@ def render_review_markdown(
     if static_report.commands:
         for command in static_report.commands:
             lines.append(f"- Ran `{command}`")
+    elif static_report.posture == "not_run":
+        lines.append("- Static analysis was not run for this review context.")
     else:
         lines.append("- Static analysis was not run because no executable files changed.")
 
