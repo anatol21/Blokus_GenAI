@@ -1,0 +1,16 @@
+{
+  "name": "classic_expectation_mismatch",
+  "mode": "classic",
+  "moves": [
+    {
+      "player": "blue",
+      "piece": "I1",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "expect": {
+    "current_player": "blue",
+    "history_length": 1
+  }
+}

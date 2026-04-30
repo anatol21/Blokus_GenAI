@@ -24,6 +24,8 @@ or, after the bootstrap script:
 - Press `R` while dragging to rotate clockwise.
 - Press `F` while dragging to flip horizontally.
 - Release the mouse on the board to attempt placement.
+- Classic mode is highlighted in the mode switch and remains the active mode in this phase.
+- Duo remains visible as a disabled control and does not activate gameplay when clicked.
 - Illegal drops are rejected and leave the game state unchanged.
 - `Legal Moves` opens a modal with up to five valid moves ordered by largest piece first.
 - `Instructions` opens a modal with rules and controls guidance.

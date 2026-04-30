@@ -1,20 +1,125 @@
-name: CI
+name: ci
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install project
         run: ./scripts/install.sh
-      - name: Run unit tests
-        run: . .venv/bin/activate && python -m unittest discover -s tests -v
+      - name: Install Ruff
+        run: . .venv/bin/activate && python -m pip install ruff
+      - name: Run lint
+        run: . .venv/bin/activate && ruff check .
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
+      - name: Run tests
+        run: |
+          mkdir -p artifacts/ci/test
+          set -o pipefail
+          ./scripts/test.sh | tee artifacts/ci/test/output.txt
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-debug
+          path: artifacts/ci/test
+          if-no-files-found: ignore
+          retention-days: 14
+
+  cli-smoke:
+    name: cli-smoke
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
+      - name: Run CLI smoke tests
+        run: ./scripts/cli_smoke.sh
+      - name: Upload CLI artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-debug
+          path: artifacts/ci/cli
+          if-no-files-found: ignore
+          retention-days: 14
+
+  fixture-schema:
+    name: fixture-schema
+    runs-on: ubuntu-latest
+    needs: cli-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
+      - name: Validate fixtures and schemas
+        run: ./scripts/validate_fixtures.sh
+      - name: Upload fixture/schema artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-schema-debug
+          path: artifacts/ci/fixture-schema
+          if-no-files-found: ignore
+          retention-days: 14
+
+  evaluate:
+    name: evaluate
+    runs-on: ubuntu-latest
+    needs: fixture-schema
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: ./scripts/install.sh
       - name: Run evaluation harness
-        run: . .venv/bin/activate && python -m blokus evaluate
+        run: |
+          mkdir -p artifacts/ci/evaluate
+          set -o pipefail
+          ./scripts/evaluate.sh | tee artifacts/ci/evaluate/output.txt
+      - name: Upload evaluation artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluate-debug
+          path: artifacts/ci/evaluate
+          if-no-files-found: ignore
+          retention-days: 14

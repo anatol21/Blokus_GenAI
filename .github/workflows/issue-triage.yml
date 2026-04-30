@@ -1,0 +1,30 @@
+name: issue-triage
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - labeled
+      - reopened
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Route issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          PYTHONPATH: src
+        run: python scripts/github/issue_triage.py

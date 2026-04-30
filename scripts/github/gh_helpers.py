@@ -50,8 +50,54 @@ class GitHubClient:
             next_url = _next_link(headers.get("Link", ""))
         return items
 
+    def get_issue(self, issue_number: int) -> dict[str, Any]:
+        return self.request("GET", f"/repos/{self.repository}/issues/{issue_number}")
+
+    def get_pull_request(self, pull_number: int) -> dict[str, Any]:
+        return self.request("GET", f"/repos/{self.repository}/pulls/{pull_number}")
+
     def list_issue_comments(self, issue_number: int) -> list[dict[str, Any]]:
         return self.paginate(f"/repos/{self.repository}/issues/{issue_number}/comments?per_page=100")
+
+    def list_pr_files(self, pull_number: int) -> list[dict[str, Any]]:
+        return self.paginate(f"/repos/{self.repository}/pulls/{pull_number}/files?per_page=100")
+
+    def list_workflow_run_jobs(self, run_id: int) -> list[dict[str, Any]]:
+        jobs = self.paginate(f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100")
+        return [job for item in jobs for job in item.get("jobs", [item]) if isinstance(item, dict)]
+
+    def list_workflow_runs(self, workflow_file: str, *, per_page: int = 20) -> list[dict[str, Any]]:
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repository}/actions/workflows/{quote(workflow_file, safe='')}/runs?per_page={per_page}",
+        )
+        return payload.get("workflow_runs", []) if isinstance(payload, dict) else []
+
+    def list_artifacts(self, *, per_page: int = 100) -> list[dict[str, Any]]:
+        payload = self.request(
+            "GET",
+            f"/repos/{self.repository}/actions/artifacts?per_page={per_page}",
+        )
+        return payload.get("artifacts", []) if isinstance(payload, dict) else []
+
+    def add_labels(self, issue_number: int, labels: list[str]) -> None:
+        if not labels:
+            return
+        self.request(
+            "POST",
+            f"/repos/{self.repository}/issues/{issue_number}/labels",
+            {"labels": labels},
+        )
+
+    def remove_label(self, issue_number: int, label: str) -> None:
+        try:
+            self.request(
+                "DELETE",
+                f"/repos/{self.repository}/issues/{issue_number}/labels/{quote(label, safe='')}",
+            )
+        except HTTPError as exc:
+            if exc.code != 404:
+                raise
 
     def upsert_issue_comment(self, issue_number: int, marker: str, body: str) -> None:
         existing = None
@@ -73,6 +119,16 @@ class GitHubClient:
             f"/repos/{self.repository}/issues/comments/{existing['id']}",
             {"body": body},
         )
+
+    def dispatch_workflow(self, workflow_file: str, ref: str, inputs: dict[str, str]) -> None:
+        self.request(
+            "POST",
+            f"/repos/{self.repository}/actions/workflows/{quote(workflow_file, safe='')}/dispatches",
+            {"ref": ref, "inputs": inputs},
+        )
+
+    def rerun_failed_jobs(self, run_id: int) -> None:
+        self.request("POST", f"/repos/{self.repository}/actions/runs/{run_id}/rerun-failed-jobs")
 
 
 def load_event_payload(path: str) -> dict[str, Any]:

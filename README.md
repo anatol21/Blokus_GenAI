@@ -1,6 +1,6 @@
 # Blocus Focus Pokus
 
-Plain-Python Blokus project repository for course delivery. Phase 1 targets Classic as a stable baseline. Phase 2 should extend the same engine to Duo through mode configuration.
+Plain-Python Blokus project repository for course delivery. Phase 1 targets Classic as a stable baseline. Phase 2 extends the same engine to Duo through mode configuration. Phase 3 adds structured issue intake, PR intelligence, and bounded branch-level agent repair. Phase 4 adds release-candidate packaging and protected-environment delivery gates. Phase 5 hardens the pipeline with tighter workflow security, provenance, and governance review.
 
 ## Project purpose
 
@@ -13,17 +13,23 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 
 - Phase 1 baseline: Classic mode, 4 players, JSON state I/O, legality checks, move application, legal-move generation, simple computer player, tests, and fixtures.
 - Phase 2 direction: Duo mode by configuration in the same engine (`ModeConfig` extension + tests/fixtures), not by a separate engine.
+- Phase 3 direction: structured issue forms, label-driven agent entry, PR review intelligence, and bounded autonomous repair on `agent/*` branches.
+- Phase 4 direction: automated release-candidate packaging, evidence bundles, GitHub pre-releases, and protected `rc` / `submission` approval gates.
+- Phase 5 direction: workflow permission hardening, security review, artifact provenance, and operating guidance for the autonomous pipeline.
 
 ## Repository structure
 
 - `src/blokus/`: engine, models, piece transforms, CLI, rendering, evaluation harness, optional GUI.
 - `tests/`: automated `unittest` coverage for rules, transforms, serialization, CLI, AI move selection, and evaluation scenarios.
 - `fixtures/`: repeatable JSON fixtures for states and scenarios.
-- `scripts/`: reproducible install/test/evaluate/run entry points.
+- `scripts/`: reproducible install/test/evaluate/run entry points plus CI smoke and fixture validation helpers.
 - `schemas/`: JSON contracts for game state, move, and mode configuration.
 - `docs/`: requirements, architecture, contracts, review discipline, traceability, issue seeds, evidence, and AI usage logs.
-- `.github/workflows/ci.yml`: CI install + test + evaluation pipeline.
+- `.github/workflows/ci.yml`: CI lint + test + CLI smoke + fixture/schema + evaluation pipeline.
+- `.github/workflows/release-candidate.yml`: release-candidate packaging and protected `rc` publication flow.
+- `.github/workflows/promote-submission.yml`: manual promotion through the protected `submission` gate.
 - `.github/pull_request_template.md`: merge checklist with requirements/evidence/review gates.
+- `.github/CODEOWNERS`: review routing for owned paths and governance checks.
 - `.github/labels.yml`: normalized label definitions for issue workflow.
 
 ## Requirements and tracking workflow
@@ -33,9 +39,13 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - Traceability: `docs/traceability-matrix.md` links requirements to issues, code, tests, and evidence.
 - Ownership: `OWNERSHIP.md`.
 - Team/report snapshot: `TEAM_SUMMARY.md`.
+- Phase 1 governance setup: `docs/phase1-governance.md`.
+
 - Evidence: `docs/evidence-log.md`.
 - AI usage disclosure: `docs/ai-usage.md`.
-
+- Phase 3 policy and autonomy boundary: `docs/AGENT_POLICY.md`.
+- Team GitHub CI/CD guide: `docs/GITHUB_CICD_GUIDE.md`.
+- Release contents and policy: `docs/RELEASE_CONTENTS.md`, `docs/RELEASE_POLICY.md`.
 ## Quick start (plain Python)
 
 ```bash
@@ -88,6 +98,8 @@ python -m blokus show --state /tmp/classic.json
 ## Testing and reproducibility
 
 - Unit tests: `./scripts/test.sh`
+- CLI smoke checks: `./scripts/cli_smoke.sh`
+- Fixture/schema validation: `./scripts/validate_fixtures.sh`
 - Fixture-backed evaluation harness: `./scripts/evaluate.sh`
 - CI workflow: `.github/workflows/ci.yml`
 - Repeatable inputs: `fixtures/states/` and `fixtures/scenarios/`

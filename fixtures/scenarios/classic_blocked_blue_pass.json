@@ -1,0 +1,22 @@
+{
+  "name": "classic_blocked_blue_pass",
+  "state_fixture": "classic_blue_no_legal_moves.json",
+  "steps": [
+    {
+      "type": "pass",
+      "player": "blue"
+    }
+  ],
+  "expect": {
+    "current_player": "yellow",
+    "finished": false,
+    "history_length": 0,
+    "consecutive_passes": 1,
+    "occupied_counts": {
+      "blue": 0,
+      "yellow": 0,
+      "red": 0,
+      "green": 0
+    }
+  }
+}

@@ -1,0 +1,34 @@
+name: agent-entry
+
+on:
+  issues:
+    types:
+      - labeled
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to prepare for agent work
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'agent-ready'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build task packet
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          PYTHONPATH: src
+        run: python scripts/github/agent_entry.py

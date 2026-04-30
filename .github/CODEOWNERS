@@ -1,0 +1,24 @@
+# Temporary Phase 1 ownership map.
+# Follow-up: create a cleanup issue to narrow these broad rules once stable
+# module ownership is confirmed for the team.
+
+# Default fallback reviewers
+*                   @anatol21 @magx27 @Nicotico2000
+
+# Core game engine
+/src/blokus/        @anatol21 @magx27 @Nicotico2000
+
+# Testing, fixtures, contracts
+/tests/             @anatol21 @magx27 @Nicotico2000
+/fixtures/          @anatol21 @magx27 @Nicotico2000
+/schemas/           @anatol21 @magx27 @Nicotico2000
+
+# Documentation and traceability
+/docs/              @anatol21 @magx27 @Nicotico2000
+/OWNERSHIP.md       @anatol21 @magx27 @Nicotico2000
+/TEAM_SUMMARY.md    @anatol21 @magx27 @Nicotico2000
+/README.md          @anatol21 @magx27 @Nicotico2000
+
+# CI / scripts / repository automation
+/scripts/           @anatol21 @magx27 @Nicotico2000
+/.github/           @anatol21 @magx27 @Nicotico2000

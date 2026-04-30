@@ -1,0 +1,35 @@
+name: governance-review
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Generate governance review report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: src
+        run: python scripts/github/governance_review.py
+      - name: Publish governance review summary
+        run: cat artifacts/governance-review/report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload governance review artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-review
+          path: artifacts/governance-review/report.md
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,112 @@
+classDiagram
+    direction LR
+
+    class IGameLifecycle {
+        <<interface>>
+        +newGame(mode: str) GameState
+        +validateMove(state: GameState, move: Move) ValidationResult
+        +applyMove(state: GameState, move: Move) GameState
+        +listLegalMoves(state: GameState, limit: int) MoveList
+    }
+
+    class IStateIO {
+        <<interface>>
+        +loadState(path: str) GameState
+        +saveState(path: str, state: GameState) bool
+        +serializeState(state: GameState) str
+        +deserializeState(payload: str) GameState
+    }
+
+    class IVisualRender {
+        <<interface>>
+        +renderBoard(state: GameState) str
+        +renderMovePreview(state: GameState, move: Move) str
+    }
+
+    class IReleasePackaging {
+        <<interface>>
+        +buildReleaseCandidate(version: str) Package
+        +attachEvidence(bundlePath: str) bool
+        +publishPreRelease(packagePath: str) bool
+    }
+
+    class CLIAdapter {
+        <<component>>
+        +parseArgs(argv: str[]) Command
+        +execute(command: Command) int
+    }
+
+    class GUIAdapter {
+        <<component>>
+        +startSession(mode: str) Session
+        +submitMove(move: Move) ValidationResult
+    }
+
+    class BlokusEngine {
+        <<component>>
+        +createInitialState(mode: str) GameState
+        +validateMove(state: GameState, move: Move) ValidationResult
+        +applyMove(state: GameState, move: Move) GameState
+        +computeLegalMoves(state: GameState, limit: int) MoveList
+    }
+
+    class ModeConfiguration {
+        <<component>>
+        +getModeConfig(mode: str) ModeConfig
+        +validateModeConfig(config: ModeConfig) bool
+    }
+
+    class PieceTransformService {
+        <<component>>
+        +uniqueTransforms(pieceId: str) TransformSet
+        +normalizePlacement(move: Move) Placement
+    }
+
+    class StateSerialization {
+        <<component>>
+        +load(path: str) GameState
+        +save(path: str, state: GameState) bool
+    }
+
+    class EvaluationHarness {
+        <<component>>
+        +runScenario(scenarioPath: str) EvaluationReport
+        +compareExpected(actual: GameState, expected: GameState) Diff
+    }
+
+    class ReleaseOrchestrator {
+        <<component>>
+        +assembleArtifacts(version: str) ArtifactBundle
+        +generateReleaseNotes(version: str) str
+    }
+
+    class GameStateSchema {
+        <<artifact>>
+        +path: schemas/game_state.schema.json
+    }
+
+    class ScenarioFixtures {
+        <<artifact>>
+        +path: fixtures/scenarios/*.json
+    }
+
+    class RequirementsSpec {
+        <<artifact>>
+        +path: docs/requirements.md
+    }
+
+    CLIAdapter ..|> IGameLifecycle : uses
+    CLIAdapter ..|> IStateIO : uses
+    GUIAdapter ..|> IGameLifecycle : uses
+    GUIAdapter ..|> IVisualRender : uses
+
+    BlokusEngine ..|> IGameLifecycle : implements
+    StateSerialization ..|> IStateIO : implements
+    ReleaseOrchestrator ..|> IReleasePackaging : implements
+
+    BlokusEngine ..> ModeConfiguration : depends on
+    BlokusEngine ..> PieceTransformService : depends on
+    BlokusEngine ..> GameStateSchema : validates against
+    EvaluationHarness ..> ScenarioFixtures : executes
+    EvaluationHarness ..> RequirementsSpec : traces to
+    ReleaseOrchestrator ..> EvaluationHarness : consumes reports

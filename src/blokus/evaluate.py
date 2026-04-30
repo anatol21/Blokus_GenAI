@@ -4,11 +4,12 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from blokus.engine import apply_move, new_game, occupied_square_counts
-from blokus.models import Move
+from blokus.engine import apply_move, compute_scores, new_game, occupied_square_counts, pass_turn
+from blokus.models import GameState, Move
 
 
 SCENARIO_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "scenarios"
+STATE_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "states"
 
 
 @dataclass(frozen=True)
@@ -27,16 +28,50 @@ def _load_scenario(path: Path) -> dict[str, object]:
         return json.load(handle)
 
 
+def _load_state_fixture(name: str) -> GameState:
+    """Read a serialized state fixture and rebuild the game state."""
+
+    path = Path(name)
+    if not path.is_absolute():
+        path = STATE_DIR / name
+    with path.open("r", encoding="utf-8") as handle:
+        return GameState.from_dict(json.load(handle))
+
+
+def _initial_state_for_scenario(scenario: dict[str, object]) -> GameState:
+    """Build the starting state for a scenario, optionally from a saved fixture."""
+
+    state_fixture = scenario.get("state_fixture")
+    if state_fixture is not None:
+        return _load_state_fixture(str(state_fixture))
+    return new_game(mode=str(scenario.get("mode", "classic")))
+
+
+def _scenario_steps(scenario: dict[str, object]) -> list[dict[str, object]]:
+    """Normalize fixture steps so scenarios can mix moves and pass actions."""
+
+    raw_steps = scenario.get("steps")
+    if isinstance(raw_steps, list):
+        return [dict(step) for step in raw_steps]
+    return [{"type": "move", **dict(raw_move)} for raw_move in scenario.get("moves", [])]
+
+
 def run_scenario(path: Path) -> ScenarioResult:
     """Execute one scenario fixture against the engine and compare expectations."""
 
     scenario = _load_scenario(path)
-    state = new_game(mode=str(scenario.get("mode", "classic")))
+    state = _initial_state_for_scenario(scenario)
     name = str(scenario.get("name", path.stem))
 
     try:
-        for raw_move in scenario.get("moves", []):
-            state = apply_move(state, Move.from_dict(raw_move))
+        for step in _scenario_steps(scenario):
+            step_type = str(step.get("type", "move"))
+            if step_type == "pass":
+                player = step.get("player")
+                state = pass_turn(state, player=str(player) if player is not None else None)
+                continue
+            move_payload = {key: value for key, value in step.items() if key != "type"}
+            state = apply_move(state, Move.from_dict(move_payload))
     except Exception as exc:  # pragma: no cover - surfaced in tests and CLI output
         return ScenarioResult(name=name, passed=False, detail=f"Scenario failed during move execution: {exc}")
 
@@ -68,6 +103,17 @@ def run_scenario(path: Path) -> ScenarioResult:
             detail=f"Expected history length {expected_history_length}, got {len(state.history)}.",
         )
 
+    expected_consecutive_passes = expected.get("consecutive_passes")
+    if expected_consecutive_passes is not None and state.consecutive_passes != int(expected_consecutive_passes):
+        return ScenarioResult(
+            name=name,
+            passed=False,
+            detail=(
+                f"Expected consecutive_passes={expected_consecutive_passes}, "
+                f"got {state.consecutive_passes}."
+            ),
+        )
+
     expected_counts = expected.get("occupied_counts")
     if isinstance(expected_counts, dict):
         actual_counts = occupied_square_counts(state)
@@ -79,6 +125,20 @@ def run_scenario(path: Path) -> ScenarioResult:
                     detail=(
                         f"Expected {player} to occupy {expected_count} squares, "
                         f"got {actual_counts[str(player)]}."
+                    ),
+                )
+
+    expected_scores = expected.get("scores")
+    if isinstance(expected_scores, dict):
+        actual_scores = compute_scores(state)
+        for player, expected_score in expected_scores.items():
+            if actual_scores[str(player)] != int(expected_score):
+                return ScenarioResult(
+                    name=name,
+                    passed=False,
+                    detail=(
+                        f"Expected score for {player} to be {expected_score}, "
+                        f"got {actual_scores[str(player)]}."
                     ),
                 )
 

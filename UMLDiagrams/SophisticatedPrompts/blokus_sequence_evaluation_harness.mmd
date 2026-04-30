@@ -1,0 +1,55 @@
+sequenceDiagram
+    participant EvalCLI as blokus.evaluate.main
+    participant ScenarioRunner as run_all_scenarios
+    participant FixtureStore as fixtures/scenarios/*.json
+    participant Engine as blokus.engine
+    participant State as GameState
+
+    EvalCLI->>ScenarioRunner: run_all_scenarios(directory)
+    activate EvalCLI
+    activate ScenarioRunner
+    note right of ScenarioRunner: REQ-R-E-01: Evaluation harness executes repeatable scenarios
+
+    loop for each scenario fixture
+        ScenarioRunner->>FixtureStore: load_scenario(path)
+        activate FixtureStore
+        note right of FixtureStore: REQ-R-T-06: Use fixtures as repeatable test inputs
+        FixtureStore-->>ScenarioRunner: scenario(mode,moves,expect)
+        deactivate FixtureStore
+
+        ScenarioRunner->>Engine: new_game(mode)
+        activate Engine
+        note right of Engine: REQ-R-F-01: Engine creates mode-configured state
+        Engine-->>ScenarioRunner: state
+        deactivate Engine
+
+        loop for each scripted move
+            ScenarioRunner->>Engine: apply_move(state, move)
+            activate Engine
+            note right of Engine: REQ-R-F-05: Apply validated move transitions deterministically
+            Engine->>Engine: validate_move(state, move)
+            note right of Engine: REQ-R-F-04: Validate legality before state mutation
+            Engine-->>ScenarioRunner: state'
+            deactivate Engine
+        end
+
+        opt expected occupied counts provided
+            ScenarioRunner->>Engine: occupied_square_counts(state)
+            activate Engine
+            note right of Engine: REQ-R-E-02: Verify implementation correctness through measurable outcomes
+            Engine-->>ScenarioRunner: actualCounts
+            deactivate Engine
+        end
+
+        alt all assertions pass
+            ScenarioRunner-->>EvalCLI: ScenarioResult(passed=True)
+        else assertion or execution failure
+            ScenarioRunner-->>EvalCLI: ScenarioResult(passed=False, detail)
+        end
+    end
+
+    ScenarioRunner-->>EvalCLI: results[]
+    deactivate ScenarioRunner
+    EvalCLI->>EvalCLI: printSummary(passCount,total)
+    note right of EvalCLI: REQ-R-E-05: Evidence-based quality claim from measured results
+    deactivate EvalCLI
