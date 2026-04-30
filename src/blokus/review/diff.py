@@ -6,6 +6,7 @@ import fnmatch
 import re
 import subprocess
 from pathlib import Path
+from typing import TypedDict, cast
 
 from blokus.review.config import ReviewConfig
 from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayload
@@ -13,6 +14,21 @@ from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayl
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performance|refactor)\b", re.IGNORECASE)
+
+
+class _RepoRef(TypedDict):
+    full_name: str
+
+
+class _PullRequestSide(TypedDict):
+    sha: str
+    repo: _RepoRef
+
+
+class _PullRequestPayload(TypedDict):
+    base: _PullRequestSide
+    head: _PullRequestSide
+    number: int
 
 
 def build_review_context(
@@ -77,7 +93,7 @@ def _resolve_refs(
     pr_number: int | None,
 ) -> tuple[str, str, int | None, bool]:
     if event_payload and "pull_request" in event_payload:
-        pull_request = event_payload["pull_request"]
+        pull_request = cast(_PullRequestPayload, event_payload["pull_request"])
         base_value = str(pull_request["base"]["sha"])
         head_value = str(pull_request["head"]["sha"])
         same_repo = pull_request["head"]["repo"]["full_name"] == pull_request["base"]["repo"]["full_name"]

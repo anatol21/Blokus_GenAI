@@ -297,7 +297,7 @@ def tests_missing(paths: Iterable[str]) -> bool:
     return code_touched and not tests_touched
 
 
-tests_missing.__test__ = False
+setattr(tests_missing, "__test__", False)
 
 
 def classify_failure_category(job_names: Iterable[str]) -> str:

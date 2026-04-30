@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import cast
 
 from blokus.review.config import ReviewConfig
 from blokus.review.prompts import load_prompt
@@ -101,12 +102,15 @@ def _parse_specialist_response(
     changed_paths = {changed_file.path: changed_file for changed_file in files}
 
     findings: list[Finding] = []
-    for item in data.get("findings", []):
+    for item in _dict_list(data.get("findings")):
         try:
             path = str(item["file"])
-            line_start = int(item["line_start"])
-            line_end = int(item["line_end"])
-        except (KeyError, TypeError, ValueError):
+        except KeyError:
+            continue
+
+        line_start = _int_value(item.get("line_start"))
+        line_end = _int_value(item.get("line_end"))
+        if line_start is None or line_end is None:
             continue
         changed_file = changed_paths.get(path)
         if changed_file is None:
@@ -133,7 +137,7 @@ def _parse_specialist_response(
         )
 
     uncertain_risks: list[UncertainRisk] = []
-    for item in data.get("uncertain_risks", []):
+    for item in _dict_list(data.get("uncertain_risks")):
         if not all(key in item for key in ("risk", "reason_uncertain", "suggested_verification")):
             continue
         uncertain_risks.append(
@@ -149,6 +153,19 @@ def _parse_specialist_response(
         uncertain_risks=tuple(uncertain_risks),
         note=str(data.get("note", "")),
     )
+
+
+def _dict_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [cast(dict[str, object], item) for item in value if isinstance(item, dict)]
+
+
+def _int_value(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _load_json_object(raw_response: str) -> dict[str, object]:
