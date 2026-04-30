@@ -6,7 +6,6 @@ import fnmatch
 import re
 import subprocess
 from pathlib import Path
-from typing import TypedDict
 
 from blokus.review.config import ReviewConfig
 from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayload
@@ -14,21 +13,8 @@ from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayl
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performance|refactor)\b", re.IGNORECASE)
-
-
-class _RepoRef(TypedDict):
-    full_name: str
-
-
-class _PullRequestSide(TypedDict):
-    sha: str
-    repo: _RepoRef
-
-
-class _PullRequestPayload(TypedDict):
-    base: _PullRequestSide
-    head: _PullRequestSide
-    number: int
+MAX_STORED_PATCH_CHARS = 16_000
+_PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 
 
 def build_review_context(
@@ -113,17 +99,21 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
         status = parts[0]
         old_path = parts[1] if status.startswith(("R", "C")) and len(parts) > 2 else None
         path = parts[-1]
-        patch = full_patch_by_path.get(path, "")
+        full_patch = full_patch_by_path.get(path, "")
+        line_spans = tuple(_parse_line_spans(full_patch))
+        performance_sensitive = _is_performance_sensitive(config, path, full_patch)
+        patch, patch_truncated = _truncate_patch_for_storage(full_patch)
         changed_files.append(
             ChangedFile(
                 path=path,
                 status=status,
                 patch=patch,
-                line_spans=tuple(_parse_line_spans(patch)),
+                line_spans=line_spans,
                 executable=_is_executable_path(path),
                 categories=tuple(_categorize_path(path)),
                 old_path=old_path,
-                performance_sensitive=_is_performance_sensitive(config, path, patch),
+                performance_sensitive=performance_sensitive,
+                patch_truncated=patch_truncated,
             )
         )
 
@@ -139,21 +129,31 @@ def _parse_line_spans(patch_text: str) -> list[LineSpan]:
     spans: list[LineSpan] = []
     current_line: int | None = None
     span_start: int | None = None
+    deletion_anchor: int | None = None
+
+    def flush_current_hunk() -> None:
+        nonlocal span_start, deletion_anchor
+        if span_start is not None and current_line is not None:
+            spans.append(LineSpan(start=span_start, end=current_line - 1))
+        elif deletion_anchor is not None:
+            anchor_line = max(1, deletion_anchor)
+            spans.append(LineSpan(start=anchor_line, end=anchor_line))
+        span_start = None
+        deletion_anchor = None
 
     for raw_line in patch_text.splitlines():
         if raw_line.startswith("diff --git "):
-            if span_start is not None and current_line is not None:
-                spans.append(LineSpan(start=span_start, end=current_line - 1))
+            if current_line is not None:
+                flush_current_hunk()
             current_line = None
-            span_start = None
             continue
 
         match = _HUNK_RE.match(raw_line)
         if match:
-            if span_start is not None and current_line is not None:
-                spans.append(LineSpan(start=span_start, end=current_line - 1))
+            if current_line is not None:
+                flush_current_hunk()
             current_line = int(match.group("start"))
-            span_start = None
+            deletion_anchor = current_line if int(match.group("count") or "1") == 0 else None
             continue
 
         if current_line is None or raw_line.startswith(("--- ", "+++ ")):
@@ -163,18 +163,20 @@ def _parse_line_spans(patch_text: str) -> list[LineSpan]:
             if span_start is None:
                 span_start = current_line
             current_line += 1
+            deletion_anchor = None
             continue
 
         if raw_line.startswith("-") or raw_line.startswith("\\"):
             continue
 
         if span_start is not None:
-            spans.append(LineSpan(start=span_start, end=current_line - 1))
-            span_start = None
+            flush_current_hunk()
+        else:
+            deletion_anchor = None
         current_line += 1
 
-    if span_start is not None and current_line is not None:
-        spans.append(LineSpan(start=span_start, end=current_line - 1))
+    if current_line is not None:
+        flush_current_hunk()
     return spans
 
 
@@ -257,6 +259,14 @@ def _is_performance_sensitive(config: ReviewConfig, path: str, patch: str) -> bo
     if any(marker in path for marker in config.performance.path_markers):
         return True
     return any(marker in patch for marker in config.performance.diff_markers)
+
+
+def _truncate_patch_for_storage(patch: str) -> tuple[str, bool]:
+    if len(patch) <= MAX_STORED_PATCH_CHARS:
+        return patch, False
+    available = max(0, MAX_STORED_PATCH_CHARS - len(_PATCH_TRUNCATION_MARKER))
+    trimmed = patch[:available].rstrip("\n")
+    return f"{trimmed}{_PATCH_TRUNCATION_MARKER}", True
 
 
 def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:

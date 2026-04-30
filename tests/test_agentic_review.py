@@ -10,6 +10,7 @@ from typing import cast
 from urllib.error import URLError
 from unittest import mock
 
+import blokus.review.coordinator as review_coordinator
 import blokus.review.diff as review_diff
 from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
@@ -70,6 +71,7 @@ def _changed_file(
     line_end: int = 1,
     patch: str = "",
     performance_sensitive: bool = False,
+    patch_truncated: bool = False,
 ) -> ChangedFile:
     categories = []
     if path.endswith(".py"):
@@ -90,11 +92,25 @@ def _changed_file(
         executable=path.endswith(".py") or path.endswith(".sh"),
         categories=tuple(categories),
         performance_sensitive=performance_sensitive,
+        patch_truncated=patch_truncated,
     )
 
 
-def _review_context(*changed_files: ChangedFile, same_repo: bool = True) -> ReviewContext:
+def _review_context(
+    *changed_files: ChangedFile,
+    same_repo: bool = True,
+    raw_diff: str | None = None,
+) -> ReviewContext:
     executable_files = tuple(item for item in changed_files if item.executable)
+    rendered_diff = (
+        raw_diff
+        if raw_diff is not None
+        else "\n\n".join(
+            f"File: {item.path}\n```diff\n{item.patch.strip()}\n```"
+            for item in changed_files
+            if item.patch
+        )
+    )
     return ReviewContext(
         pr=ReviewPayload(number=17, head_sha="headsha", base_sha="basesha"),
         base_ref="origin/main",
@@ -106,11 +122,7 @@ def _review_context(*changed_files: ChangedFile, same_repo: bool = True) -> Revi
         bias_risks=("self-declared-correctness-bias", "misleading-task-bias"),
         same_repo=same_repo,
         executable_files=executable_files,
-        raw_diff="\n\n".join(
-            f"File: {item.path}\n```diff\n{item.patch.strip()}\n```"
-            for item in changed_files
-            if item.patch
-        ),
+        raw_diff=rendered_diff,
     )
 
 
@@ -182,6 +194,85 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(changed_files[0].line_spans, (LineSpan(3, 3),))
         self.assertEqual(git_output.call_count, 1)
         git_output.assert_called_once_with(config.repo_root, ["diff", "--unified=3", "base...head"])
+
+    def test_load_changed_files_truncates_large_patches_after_analysis(self) -> None:
+        config = _make_config(REPO_ROOT)
+        large_hunk_lines = [f"+line {index}" for index in range(1800)]
+        large_hunk_lines[-1] = "+cache warmup marker"
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/blokus/review/diff.py b/src/blokus/review/diff.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/blokus/review/diff.py",
+                "+++ b/src/blokus/review/diff.py",
+                "@@ -0,0 +1,1800 @@",
+                *large_hunk_lines,
+            ]
+        )
+
+        with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/blokus/review/diff.py"]), mock.patch.object(
+            review_diff,
+            "_git_output",
+            return_value=patch_text,
+        ):
+            changed_files = review_diff._load_changed_files(config, "base", "head")
+
+        self.assertEqual(len(changed_files), 1)
+        self.assertTrue(changed_files[0].patch_truncated)
+        self.assertTrue(changed_files[0].performance_sensitive)
+        self.assertLessEqual(len(changed_files[0].patch), review_diff.MAX_STORED_PATCH_CHARS)
+        self.assertIn("truncated for scale", changed_files[0].patch)
+
+    def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -10,2 +12,0 @@",
+                "-old value",
+                "-other old value",
+            ]
+        )
+
+        spans = review_diff._parse_line_spans(patch_text)
+
+        self.assertEqual(spans, [LineSpan(12, 12)])
+
+    def test_deletion_only_anchor_filters_unrelated_static_findings(self) -> None:
+        config = _make_config(REPO_ROOT)
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -10,2 +12,0 @@",
+                "-old value",
+                "-other old value",
+            ]
+        )
+
+        with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/demo.py"]), mock.patch.object(
+            review_diff,
+            "_git_output",
+            return_value=patch_text,
+        ):
+            changed_files = review_diff._load_changed_files(config, "base", "head")
+
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(*changed_files)
+        tool_run = ToolRun(
+            command="mypy src/demo.py",
+            returncode=1,
+            stdout="src/demo.py:30: error: Baseline issue should be filtered\n",
+            stderr="",
+        )
+
+        findings = analyzer._parse_mypy(context, tool_run)
+
+        self.assertEqual(findings, [])
 
     def test_resolve_refs_falls_back_for_partial_pull_request_payload(self) -> None:
         resolved = review_diff._resolve_refs(
@@ -567,7 +658,7 @@ class AgenticReviewTests(unittest.TestCase):
                 captured.append((specialist, tuple(changed_file.path for changed_file in files), rendered_diff))
                 return SpecialistResponse(findings=(), uncertain_risks=(), note="")
 
-        findings, uncertain_risks = coordinator._run_specialists(
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
             cast(SpecialistRunner, FakeRunner()),
             context,
             [],
@@ -581,11 +672,81 @@ class AgenticReviewTests(unittest.TestCase):
             [item[0] for item in captured],
             ["correctness", "tests", "performance"],
         )
+        self.assertFalse(truncated)
         self.assertIs(captured[0][2], captured[2][2])
         self.assertEqual(captured[1][2], context.raw_diff)
         self.assertIn("src/blokus/engine.py", captured[0][2])
         self.assertNotIn("schemas/agentic_review_output.schema.json", captured[0][2])
         self.assertIn("schemas/agentic_review_output.schema.json", captured[1][2])
+
+    def test_coordinator_bounds_rendered_diff_bundles_for_specialists(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        huge_patch = "\n".join(
+            [
+                "diff --git a/src/blokus/engine.py b/src/blokus/engine.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/blokus/engine.py",
+                "+++ b/src/blokus/engine.py",
+                "@@ -1,1 +1,1400 @@",
+                *["+value = cache_lookup(item)" for _ in range(1400)],
+            ]
+        )
+        context = _review_context(
+            _changed_file(
+                "src/blokus/engine.py",
+                line_start=1,
+                line_end=1400,
+                patch=huge_patch,
+            ),
+            raw_diff="",
+        )
+        captured: list[str] = []
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                captured.append(rendered_diff)
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=True,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertEqual(uncertain_risks, [])
+        self.assertTrue(truncated)
+        self.assertTrue(captured)
+        self.assertTrue(all(len(bundle) <= review_coordinator.MAX_RENDERED_DIFF_CHARS for bundle in captured))
+        self.assertTrue(any("truncated for scale" in bundle for bundle in captured))
+
+    def test_coordinator_filters_findings_with_invalid_category(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        invalid = Finding(
+            id="invalid-category",
+            title="Bad enum",
+            severity="high",
+            confidence="high",
+            category="test",
+            file="src/blokus/engine.py",
+            line_start=4,
+            line_end=4,
+            evidence="Schema-unsafe category.",
+            impact="Would violate the published review schema.",
+            suggested_action="Use a supported category enum.",
+            blocking_recommendation=True,
+        )
+
+        self.assertEqual(coordinator._dedupe_and_limit([invalid]), [])
 
     def test_coordinator_dedupes_invalid_and_lower_ranked_findings(self) -> None:
         coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
@@ -1154,7 +1315,26 @@ class AgenticReviewTests(unittest.TestCase):
                 dict[str, object],
                 cast(dict[str, object], properties["findings"])["items"],
             )
-            self.assertEqual(set(findings_payload[0].keys()), set(cast(list[str], finding_schema["required"])))
+            finding_properties = cast(dict[str, object], finding_schema["properties"])
+            for finding in findings_payload:
+                self.assertEqual(set(finding.keys()), set(cast(list[str], finding_schema["required"])))
+                self.assertIn(
+                    finding["severity"],
+                    cast(list[str], cast(dict[str, object], finding_properties["severity"])["enum"]),
+                )
+                self.assertIn(
+                    finding["confidence"],
+                    cast(list[str], cast(dict[str, object], finding_properties["confidence"])["enum"]),
+                )
+                self.assertIn(
+                    finding["category"],
+                    cast(list[str], cast(dict[str, object], finding_properties["category"])["enum"]),
+                )
+                self.assertGreaterEqual(cast(int, finding["line_start"]), 1)
+                self.assertGreaterEqual(
+                    cast(int, finding["line_end"]),
+                    cast(int, finding["line_start"]),
+                )
 
         risks_payload = cast(list[dict[str, object]], payload["uncertain_risks"])
         if risks_payload:
@@ -1203,6 +1383,37 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(invocations[0], [sys.executable, "-m", "compileall", "src/blokus/cli.py"])
 
+    def test_static_analyzer_batches_large_python_file_sets(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(*[_changed_file(f"src/module_{index}.py") for index in range(101)])
+        commands: list[list[str]] = []
+
+        def fake_run(args: list[str]) -> ToolRun:
+            commands.append(args)
+            if args[0] == "/ruff":
+                return ToolRun(command=" ".join(args), returncode=0, stdout="[]", stderr="")
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        compileall_commands = [command for command in report.commands if "compileall" in command]
+        ruff_commands = [command for command in report.commands if command.startswith("/ruff check")]
+        mypy_commands = [command for command in report.commands if command.startswith("/mypy ")]
+        self.assertEqual(len(compileall_commands), 2)
+        self.assertEqual(len(ruff_commands), 2)
+        self.assertEqual(len(mypy_commands), 2)
+        self.assertEqual(len(commands), 6)
+
     def test_static_analyzer_skips_compileall_for_shell_only_changes(self) -> None:
         config = _make_config(REPO_ROOT)
         analyzer = StaticAnalyzer(config)
@@ -1221,6 +1432,159 @@ class AgenticReviewTests(unittest.TestCase):
             analyzer.analyze(context)
 
         self.assertEqual(invocations, [["bash", "-n", "scripts/check.sh"]])
+
+    def test_static_analyzer_batches_large_shell_file_sets(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(*[_changed_file(f"scripts/check_{index}.sh") for index in range(101)])
+
+        def fake_run(args: list[str]) -> ToolRun:
+            if args[0] == "/shellcheck":
+                return ToolRun(command=" ".join(args), returncode=0, stdout='{"comments": []}', stderr="")
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: "/shellcheck" if name == "shellcheck" else None,
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        bash_commands = [command for command in report.commands if command.startswith("bash -n ")]
+        shellcheck_commands = [command for command in report.commands if command.startswith("/shellcheck -f json1")]
+        self.assertEqual(len(bash_commands), 2)
+        self.assertEqual(len(shellcheck_commands), 2)
+
+    def test_static_analyzer_marks_ruff_json_parse_failures_as_uncertain(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(_changed_file("sandbox/demo.py"))
+
+        def fake_run(args: list[str]) -> ToolRun:
+            if args[0] == "/ruff":
+                return ToolRun(command=" ".join(args), returncode=1, stdout="{invalid", stderr="")
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        self.assertEqual(report.posture, "unavailable")
+        self.assertTrue(any(risk.risk == "Ruff output could not be parsed as JSON." for risk in report.uncertain_risks))
+
+    def test_static_analyzer_marks_shellcheck_json_parse_failures_as_uncertain(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(_changed_file("scripts/check.sh"))
+
+        def fake_run(args: list[str]) -> ToolRun:
+            if args[0] == "/shellcheck":
+                return ToolRun(command=" ".join(args), returncode=1, stdout="{invalid", stderr="")
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: "/shellcheck" if name == "shellcheck" else None,
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        self.assertEqual(report.posture, "unavailable")
+        self.assertTrue(
+            any(risk.risk == "ShellCheck output could not be parsed as JSON." for risk in report.uncertain_risks)
+        )
+
+    def test_coordinator_keeps_review_context_when_ruff_json_is_invalid(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file("sandbox/demo.py", line_start=12, line_end=12),
+            same_repo=False,
+            raw_diff="",
+        )
+
+        def fake_run(args: list[str]) -> ToolRun:
+            if args[0] == sys.executable:
+                return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+            if args[0] == "/ruff":
+                return ToolRun(command=" ".join(args), returncode=1, stdout="{invalid", stderr="")
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch("blokus.review.coordinator.build_review_context", return_value=context), mock.patch.object(
+            coordinator.static_analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            coordinator.static_analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            run = coordinator.run()
+
+        self.assertEqual(run.context.base_ref, "origin/main")
+        self.assertEqual(run.static_report.posture, "unavailable")
+        self.assertTrue(
+            any(risk.risk == "Ruff output could not be parsed as JSON." for risk in run.result.uncertain_risks)
+        )
+        self.assertFalse(any("refs were unavailable" in risk.risk for risk in run.result.uncertain_risks))
+
+    def test_coordinator_adds_uncertain_risk_when_diff_context_is_truncated(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        huge_patch = "\n".join(
+            [
+                "diff --git a/src/blokus/engine.py b/src/blokus/engine.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/blokus/engine.py",
+                "+++ b/src/blokus/engine.py",
+                "@@ -1,1 +1,1600 @@",
+                *["+value = cache_lookup(item)" for _ in range(1600)],
+            ]
+        )
+        context = _review_context(
+            _changed_file(
+                "src/blokus/engine.py",
+                line_start=1,
+                line_end=1600,
+                patch=huge_patch,
+            ),
+            raw_diff="",
+        )
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=("compileall",), posture="clean")
+
+        class FakeProvider:
+            def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+                return json.dumps({"findings": [], "uncertain_risks": [], "note": ""})
+
+        with mock.patch("blokus.review.coordinator.build_review_context", return_value=context), mock.patch.object(
+            coordinator.static_analyzer,
+            "analyze",
+            return_value=static_report,
+        ), mock.patch(
+            "blokus.review.coordinator.OpenRouterClient.from_env",
+            return_value=FakeProvider(),
+        ):
+            run = coordinator.run()
+
+        self.assertEqual(run.result.verdict, "DISCUSS")
+        self.assertTrue(
+            any(risk.risk == "Diff context was truncated for scale." for risk in run.result.uncertain_risks)
+        )
 
     def test_openrouter_client_retries_retryable_failures(self) -> None:
         client = OpenRouterClient(

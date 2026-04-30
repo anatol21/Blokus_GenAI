@@ -13,6 +13,18 @@ from blokus.review.specialists import SpecialistRunner
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer
 from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
 
+ALLOWED_FINDING_CATEGORIES = {
+    "correctness",
+    "tests",
+    "performance",
+    "static-analysis",
+    "requirements",
+}
+MAX_RENDERED_DIFF_CHARS = 120_000
+MAX_RENDERED_PATCH_CHARS = 12_000
+_RENDERED_PATCH_TRUNCATION_MARKER = "\n... [diff hunk truncated for scale]\n"
+_RENDERED_BUNDLE_TRUNCATION_MARKER = "\n\n... [additional diff context truncated for scale]"
+
 
 @dataclass(frozen=True)
 class ReviewRun:
@@ -22,6 +34,12 @@ class ReviewRun:
     result: ReviewResult
     markdown: str
     static_report: StaticAnalysisReport
+
+
+@dataclass(frozen=True)
+class _RenderedDiffBundle:
+    text: str
+    truncated: bool
 
 
 class ReviewCoordinator:
@@ -48,10 +66,6 @@ class ReviewCoordinator:
                 head_ref=head_ref,
                 pr_number=pr_number,
             )
-            static_report = self.static_analyzer.analyze(context)
-            findings = list(static_report.findings)
-            uncertain_risks = list(static_report.uncertain_risks)
-            performance_requested = should_run_performance_review(self.config, context)
         except (subprocess.CalledProcessError, KeyError, TypeError, ValueError) as exc:
             context = _fallback_review_context(event_payload, base_ref, head_ref, pr_number)
             static_report = StaticAnalysisReport(
@@ -69,10 +83,16 @@ class ReviewCoordinator:
                 )
             ]
             performance_requested = False
+        else:
+            static_report = self.static_analyzer.analyze(context)
+            findings = list(static_report.findings)
+            uncertain_risks = list(static_report.uncertain_risks)
+            performance_requested = should_run_performance_review(self.config, context)
 
         provider_available = False
         provider: OpenRouterClient | None = None
         provider_error: str | None = None
+        diff_context_truncated = any(changed_file.patch_truncated for changed_file in context.changed_files)
         if context.same_repo and context.changed_files:
             try:
                 provider = OpenRouterClient.from_env(self.config)
@@ -97,13 +117,17 @@ class ReviewCoordinator:
 
         if provider is not None and context.changed_files:
             specialist_runner = SpecialistRunner(self.config, provider)
-            findings, uncertain_risks = self._run_specialists(
+            findings, uncertain_risks, rendered_diff_truncated = self._run_specialists(
                 specialist_runner,
                 context,
                 findings,
                 uncertain_risks,
                 performance_requested,
             )
+            diff_context_truncated = diff_context_truncated or rendered_diff_truncated
+
+        if diff_context_truncated:
+            _append_diff_truncation_risk(uncertain_risks)
 
         findings = self._dedupe_and_limit(findings)
         summary = self._build_summary(context, findings, static_report, performance_requested, provider_available)
@@ -130,8 +154,12 @@ class ReviewCoordinator:
         findings: list[Finding],
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
-    ) -> tuple[list[Finding], list[UncertainRisk]]:
-        all_changed_diff = context.raw_diff or _render_diff_bundle(context.changed_files)
+    ) -> tuple[list[Finding], list[UncertainRisk], bool]:
+        all_changed_diff = (
+            _RenderedDiffBundle(text=context.raw_diff, truncated=False)
+            if context.raw_diff
+            else _render_diff_bundle(context.changed_files)
+        )
         executable_diff = (
             all_changed_diff
             if context.changed_files == context.executable_files
@@ -142,14 +170,14 @@ class ReviewCoordinator:
             specialist_runner,
             context,
             context.executable_files,
-            executable_diff,
+            executable_diff.text,
         )
         tests = self._run_specialist(
             "tests",
             specialist_runner,
             context,
             context.changed_files,
-            all_changed_diff,
+            all_changed_diff.text,
         )
 
         findings.extend(correctness.findings)
@@ -163,12 +191,12 @@ class ReviewCoordinator:
                 specialist_runner,
                 context,
                 context.executable_files,
-                executable_diff,
+                executable_diff.text,
             )
             findings.extend(performance.findings)
             uncertain_risks.extend(performance.uncertain_risks)
 
-        return findings, uncertain_risks
+        return findings, uncertain_risks, all_changed_diff.truncated or executable_diff.truncated
 
     def _run_specialist(
         self,
@@ -260,16 +288,35 @@ def _is_valid_finding(finding: Finding) -> bool:
             finding.line_end >= finding.line_start,
             finding.severity in {"critical", "high", "moderate", "low"},
             finding.confidence in {"high", "medium", "low"},
+            finding.category in ALLOWED_FINDING_CATEGORIES,
         ]
     )
 
 
-def _render_diff_bundle(files: tuple[ChangedFile, ...]) -> str:
-    return "\n\n".join(
-        f"File: {changed_file.path}\n```diff\n{changed_file.patch.strip()}\n```"
-        for changed_file in files
-        if changed_file.patch
-    )
+def _render_diff_bundle(files: tuple[ChangedFile, ...]) -> _RenderedDiffBundle:
+    blocks: list[str] = []
+    total_length = 0
+    truncated = False
+
+    for changed_file in files:
+        block, block_truncated = _render_patch_block(changed_file)
+        if not block:
+            continue
+        separator = "\n\n" if blocks else ""
+        candidate = f"{separator}{block}"
+        if total_length + len(candidate) > MAX_RENDERED_DIFF_CHARS:
+            truncated = True
+            break
+        blocks.append(candidate)
+        total_length += len(candidate)
+        truncated = truncated or block_truncated
+
+    rendered = "".join(blocks)
+    if truncated:
+        available = MAX_RENDERED_DIFF_CHARS - len(rendered)
+        marker = _truncate_text(_RENDERED_BUNDLE_TRUNCATION_MARKER, available, _RENDERED_BUNDLE_TRUNCATION_MARKER)
+        rendered = f"{rendered}{marker}"
+    return _RenderedDiffBundle(text=rendered, truncated=truncated)
 
 
 def _specialist_failure_response(specialist: str, error: Exception) -> "SpecialistResponse":
@@ -284,6 +331,45 @@ def _specialist_failure_response(specialist: str, error: Exception) -> "Speciali
         ),
         note="",
     )
+
+
+def _render_patch_block(changed_file: ChangedFile) -> tuple[str, bool]:
+    patch_body = changed_file.patch.strip()
+    if not patch_body:
+        return "", False
+
+    prefix = f"File: {changed_file.path}\n```diff\n"
+    suffix = "\n```"
+    available_patch_chars = max(0, MAX_RENDERED_PATCH_CHARS - len(prefix) - len(suffix))
+    rendered_patch = _truncate_text(
+        patch_body,
+        available_patch_chars,
+        _RENDERED_PATCH_TRUNCATION_MARKER,
+    )
+    return f"{prefix}{rendered_patch}{suffix}", rendered_patch != patch_body
+
+
+def _truncate_text(text: str, limit: int, marker: str) -> str:
+    if limit <= 0:
+        return ""
+    if limit <= len(marker):
+        return marker[:limit]
+    if len(text) <= limit:
+        return text
+    available = max(0, limit - len(marker))
+    trimmed = text[:available].rstrip("\n")
+    return f"{trimmed}{marker}"
+
+
+def _append_diff_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
+    risk = UncertainRisk(
+        risk="Diff context was truncated for scale.",
+        reason_uncertain="One or more stored patches or rendered specialist diff bundles exceeded the internal size limits, so omitted hunks may not have been reviewed in full.",
+        suggested_verification="Manually inspect the full git diff for very large PRs, especially omitted hunks or files not fully included in the review prompt.",
+    )
+    if any(existing.risk == risk.risk for existing in uncertain_risks):
+        return
+    uncertain_risks.append(risk)
 
 
 def _fallback_review_context(

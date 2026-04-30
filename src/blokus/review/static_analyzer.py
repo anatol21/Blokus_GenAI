@@ -9,6 +9,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 from blokus.automation import is_sensitive_path, tests_missing
 from blokus.review.config import ReviewConfig
@@ -20,6 +21,7 @@ _MYPY_RE = re.compile(
 )
 _COMPILEALL_RE = re.compile(r'File "(?P<file>.+?)", line (?P<line>\d+)')
 _BASH_RE = re.compile(r"^(?P<file>.+?): line (?P<line>\d+): (?P<message>.+)$")
+_MAX_TOOL_BATCH_FILES = 100
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,13 @@ class StaticAnalysisReport:
     posture: str = "not_run"
 
 
+@dataclass(frozen=True)
+class _ToolParseResult:
+    findings: tuple[Finding, ...] = ()
+    uncertain_risks: tuple[UncertainRisk, ...] = ()
+    unavailable: bool = False
+
+
 class StaticAnalyzer:
     """Run diff-aware static-analysis checks and heuristics."""
 
@@ -59,11 +68,12 @@ class StaticAnalyzer:
         unavailable_tools = False
 
         if python_files:
-            compileall_run = self._run_command(
-                [sys.executable, "-m", "compileall", *[item.path for item in python_files]]
-            )
-            commands.append(compileall_run.command)
-            findings.extend(self._parse_compileall(context, compileall_run))
+            for batch in _chunk_changed_files(python_files):
+                compileall_run = self._run_command(
+                    [sys.executable, "-m", "compileall", *[item.path for item in batch]]
+                )
+                commands.append(compileall_run.command)
+                findings.extend(self._parse_compileall(context, compileall_run))
 
         if python_files:
             ruff_path = self._discover_tool("ruff")
@@ -77,9 +87,13 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                ruff_run = self._run_command([ruff_path, "check", "--output-format", "json", *[item.path for item in python_files]])
-                commands.append(ruff_run.command)
-                findings.extend(self._parse_ruff(context, ruff_run))
+                for batch in _chunk_changed_files(python_files):
+                    ruff_run = self._run_command([ruff_path, "check", "--output-format", "json", *[item.path for item in batch]])
+                    commands.append(ruff_run.command)
+                    parsed = self._parse_ruff(context, ruff_run)
+                    findings.extend(parsed.findings)
+                    uncertain_risks.extend(parsed.uncertain_risks)
+                    unavailable_tools = unavailable_tools or parsed.unavailable
 
             mypy_path = self._discover_tool("mypy")
             if mypy_path is None:
@@ -92,24 +106,26 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                mypy_run = self._run_command(
-                    [
-                        mypy_path,
-                        "--config-file",
-                        str(self.config.repo_root / "pyproject.toml"),
-                        "--show-column-numbers",
-                        "--hide-error-context",
-                        "--no-error-summary",
-                        *[item.path for item in python_files],
-                    ]
-                )
-                commands.append(mypy_run.command)
-                findings.extend(self._parse_mypy(context, mypy_run))
+                for batch in _chunk_changed_files(python_files):
+                    mypy_run = self._run_command(
+                        [
+                            mypy_path,
+                            "--config-file",
+                            str(self.config.repo_root / "pyproject.toml"),
+                            "--show-column-numbers",
+                            "--hide-error-context",
+                            "--no-error-summary",
+                            *[item.path for item in batch],
+                        ]
+                    )
+                    commands.append(mypy_run.command)
+                    findings.extend(self._parse_mypy(context, mypy_run))
 
         if shell_files:
-            bash_run = self._run_command(["bash", "-n", *[item.path for item in shell_files]])
-            commands.append(bash_run.command)
-            findings.extend(self._parse_bash(shell_files, bash_run))
+            for batch in _chunk_changed_files(shell_files):
+                bash_run = self._run_command(["bash", "-n", *[item.path for item in batch]])
+                commands.append(bash_run.command)
+                findings.extend(self._parse_bash(batch, bash_run))
 
             shellcheck_path = self._discover_tool("shellcheck")
             if shellcheck_path is None:
@@ -122,9 +138,13 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                shellcheck_run = self._run_command([shellcheck_path, "-f", "json1", *[item.path for item in shell_files]])
-                commands.append(shellcheck_run.command)
-                findings.extend(self._parse_shellcheck(shell_files, shellcheck_run))
+                for batch in _chunk_changed_files(shell_files):
+                    shellcheck_run = self._run_command([shellcheck_path, "-f", "json1", *[item.path for item in batch]])
+                    commands.append(shellcheck_run.command)
+                    parsed = self._parse_shellcheck(batch, shellcheck_run)
+                    findings.extend(parsed.findings)
+                    uncertain_risks.extend(parsed.uncertain_risks)
+                    unavailable_tools = unavailable_tools or parsed.unavailable
 
         findings.extend(self._heuristic_findings(context))
         uncertain_risks.extend(self._heuristic_uncertain_risks(context))
@@ -142,14 +162,22 @@ class StaticAnalyzer:
             posture=posture,
         )
 
-    def _parse_ruff(self, context: ReviewContext, tool_run: ToolRun) -> list[Finding]:
+    def _parse_ruff(self, context: ReviewContext, tool_run: ToolRun) -> _ToolParseResult:
         if not tool_run.stdout.strip():
-            return []
+            return _ToolParseResult()
 
         findings: list[Finding] = []
-        for entry in json.loads(tool_run.stdout):
+        payload, parse_risk = self._load_json_output(tool_run, tool_name="Ruff", expected_shape="array")
+        if parse_risk is not None:
+            return _ToolParseResult(uncertain_risks=(parse_risk,), unavailable=True)
+
+        for entry in cast(list[dict[str, object]], payload):
+            location = entry.get("location")
+            end_location = entry.get("end_location")
+            if not isinstance(location, dict) or not isinstance(end_location, dict):
+                continue
             path = str(entry["filename"])
-            line_number = int(entry["location"]["row"])
+            line_number = int(location["row"])
             changed_file = _lookup_changed_file(context, path, line_number)
             if changed_file is None:
                 continue
@@ -167,7 +195,7 @@ class StaticAnalyzer:
                     category="static-analysis",
                     file=path,
                     line_start=line_number,
-                    line_end=int(entry["end_location"]["row"]),
+                    line_end=int(end_location["row"]),
                     evidence=f"`ruff check` reported `{code}` on a changed line: {message}",
                     impact="The changed code includes a lint diagnostic that may indicate an executable defect or maintenance hazard.",
                     suggested_action=f"Fix the Ruff diagnostic `{code}` on `{path}:{line_number}` and rerun Ruff.",
@@ -175,7 +203,7 @@ class StaticAnalyzer:
                     source="static-analyzer",
                 )
             )
-        return findings
+        return _ToolParseResult(findings=tuple(findings))
 
     def _parse_mypy(self, context: ReviewContext, tool_run: ToolRun) -> list[Finding]:
         findings: list[Finding] = []
@@ -270,13 +298,20 @@ class StaticAnalyzer:
             )
         return findings
 
-    def _parse_shellcheck(self, shell_files: list[ChangedFile], tool_run: ToolRun) -> list[Finding]:
+    def _parse_shellcheck(self, shell_files: list[ChangedFile], tool_run: ToolRun) -> _ToolParseResult:
         if not tool_run.stdout.strip():
-            return []
+            return _ToolParseResult()
         findings: list[Finding] = []
-        payload = json.loads(tool_run.stdout)
+        payload, parse_risk = self._load_json_output(tool_run, tool_name="ShellCheck", expected_shape="object")
+        if parse_risk is not None:
+            return _ToolParseResult(uncertain_risks=(parse_risk,), unavailable=True)
         shell_by_path = {item.path: item for item in shell_files}
-        for comment in payload.get("comments", []):
+        comments = cast(dict[str, object], payload).get("comments")
+        if not isinstance(comments, list):
+            return _ToolParseResult()
+        for comment in comments:
+            if not isinstance(comment, dict):
+                continue
             path = str(Path(comment["file"]).as_posix())
             line_number = int(comment["line"])
             changed_file = shell_by_path.get(path)
@@ -301,7 +336,7 @@ class StaticAnalyzer:
                     source="static-analyzer",
                 )
             )
-        return findings
+        return _ToolParseResult(findings=tuple(findings))
 
     def _heuristic_findings(self, context: ReviewContext) -> list[Finding]:
         findings: list[Finding] = []
@@ -482,6 +517,27 @@ class StaticAnalyzer:
                 stderr=stderr + f"\nCommand timed out after {self.config.provider.timeout_seconds} seconds.",
             )
 
+    def _load_json_output(
+        self,
+        tool_run: ToolRun,
+        *,
+        tool_name: str,
+        expected_shape: str,
+    ) -> tuple[object | None, UncertainRisk | None]:
+        try:
+            payload = json.loads(tool_run.stdout)
+            if expected_shape == "array" and not isinstance(payload, list):
+                raise TypeError("expected a JSON array")
+            if expected_shape == "object" and not isinstance(payload, dict):
+                raise TypeError("expected a JSON object")
+            return payload, None
+        except (json.JSONDecodeError, TypeError) as exc:
+            return None, UncertainRisk(
+                risk=f"{tool_name} output could not be parsed as JSON.",
+                reason_uncertain=f"{tool_name} returned invalid or unexpected JSON output: {exc}",
+                suggested_verification=f"Rerun `{tool_run.command}` and inspect the raw {tool_name} output for crashes, truncation, or configuration issues.",
+            )
+
 
 def _coerce_stream_text(value: bytes | str | None) -> str:
     if value is None:
@@ -499,3 +555,10 @@ def _lookup_changed_file(context: ReviewContext, path: str, line_number: int) ->
         if not changed_file.line_spans or changed_file.touches_line(line_number):
             return changed_file
     return None
+
+
+def _chunk_changed_files(changed_files: list[ChangedFile]) -> list[list[ChangedFile]]:
+    return [
+        changed_files[index : index + _MAX_TOOL_BATCH_FILES]
+        for index in range(0, len(changed_files), _MAX_TOOL_BATCH_FILES)
+    ]

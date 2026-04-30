@@ -130,6 +130,10 @@ class SerializationTests(unittest.TestCase):
 
         finding_schema = schema["properties"]["findings"]["items"]
         self.assertEqual(set(payload["findings"][0].keys()), set(finding_schema["required"]))
+        finding_properties = finding_schema["properties"]
+        self.assertIn(payload["findings"][0]["severity"], finding_properties["severity"]["enum"])
+        self.assertIn(payload["findings"][0]["confidence"], finding_properties["confidence"]["enum"])
+        self.assertIn(payload["findings"][0]["category"], finding_properties["category"]["enum"])
         self.assertGreaterEqual(payload["findings"][0]["line_start"], 1)
         self.assertGreaterEqual(payload["findings"][0]["line_end"], payload["findings"][0]["line_start"])
 
