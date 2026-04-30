@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/agentic_review_output.schema.json",
+  "title": "Agentic Review Output",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pr", "summary", "findings", "uncertain_risks"],
+  "properties": {
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "head_sha", "base_sha"],
+      "properties": {
+        "number": {
+          "type": ["integer", "null"]
+        },
+        "head_sha": {
+          "type": ["string", "null"]
+        },
+        "base_sha": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overall_risk",
+        "test_posture",
+        "static_analysis_posture",
+        "performance_posture"
+      ],
+      "properties": {
+        "overall_risk": {
+          "enum": ["low", "moderate", "high", "critical"]
+        },
+        "test_posture": {
+          "enum": ["adequate", "partial", "weak", "unknown"]
+        },
+        "static_analysis_posture": {
+          "enum": ["clean", "issues_found", "not_run", "unavailable"]
+        },
+        "performance_posture": {
+          "enum": ["clean", "review_recommended", "issues_found", "not_applicable"]
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "severity",
+          "confidence",
+          "category",
+          "file",
+          "line_start",
+          "line_end",
+          "evidence",
+          "impact",
+          "suggested_action",
+          "blocking_recommendation"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "severity": { "enum": ["critical", "high", "moderate", "low"] },
+          "confidence": { "enum": ["high", "medium", "low"] },
+          "category": { "enum": ["correctness", "tests", "performance", "static-analysis", "requirements"] },
+          "file": { "type": "string" },
+          "line_start": { "type": "integer", "minimum": 1 },
+          "line_end": { "type": "integer", "minimum": 1 },
+          "evidence": { "type": "string" },
+          "impact": { "type": "string" },
+          "suggested_action": { "type": "string" },
+          "blocking_recommendation": { "type": "boolean" }
+        }
+      }
+    },
+    "uncertain_risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk", "reason_uncertain", "suggested_verification"],
+        "properties": {
+          "risk": { "type": "string" },
+          "reason_uncertain": { "type": "string" },
+          "suggested_verification": { "type": "string" }
+        }
+      }
+    }
+  }
+}

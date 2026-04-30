@@ -11,6 +11,7 @@ COMMENT_MARKERS = {
     "triage": "agent-triage",
     "entry": "agent-entry",
     "pr_intelligence": "agent-pr-intelligence",
+    "agentic_review": "agentic-code-review",
     "failure_summary": "agent-failure-summary",
     "repair": "agent-repair-loop",
 }
