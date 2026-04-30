@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import cast
 import unittest
 
 from blokus.engine import apply_move, new_game
@@ -41,7 +42,8 @@ class SerializationTests(unittest.TestCase):
 
     def test_invalid_board_symbol_is_rejected(self) -> None:
         payload = self.load_initial_payload()
-        payload["board"][0] = "Q" + payload["board"][0][1:]
+        board = cast(list[str], payload["board"])
+        board[0] = "Q" + board[0][1:]
         with self.assertRaisesRegex(ValueError, "No player configured for board symbol"):
             GameState.from_dict(payload)
 
@@ -59,13 +61,15 @@ class SerializationTests(unittest.TestCase):
 
     def test_unknown_remaining_piece_is_rejected(self) -> None:
         payload = self.load_initial_payload()
-        payload["remaining_pieces"]["blue"][0] = "BAD"
+        remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
+        remaining_pieces["blue"][0] = "BAD"
         with self.assertRaisesRegex(ValueError, "contain unknown ids"):
             GameState.from_dict(payload)
 
     def test_duplicate_remaining_piece_is_rejected(self) -> None:
         payload = self.load_initial_payload()
-        payload["remaining_pieces"]["blue"] = ["I1", "I1"]
+        remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
+        remaining_pieces["blue"] = ["I1", "I1"]
         with self.assertRaisesRegex(ValueError, "contain duplicates"):
             GameState.from_dict(payload)
 

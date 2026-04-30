@@ -107,6 +107,12 @@ def _resolve_refs(
 def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> tuple[ChangedFile, ...]:
     diff_ref = f"{base_ref}...{head_ref}"
     name_status_lines = _git_lines(config.repo_root, ["diff", "--name-status", diff_ref])
+    full_patch_by_path = _split_patch_by_path(
+        _git_output(config.repo_root, ["diff", "--unified=3", diff_ref])
+    )
+    zero_context_patch_by_path = _split_patch_by_path(
+        _git_output(config.repo_root, ["diff", "--unified=0", diff_ref])
+    )
     changed_files: list[ChangedFile] = []
 
     for line in name_status_lines:
@@ -116,8 +122,8 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
         status = parts[0]
         old_path = parts[1] if status.startswith(("R", "C")) and len(parts) > 2 else None
         path = parts[-1]
-        patch = _git_output(config.repo_root, ["diff", "--unified=3", diff_ref, "--", path])
-        zero_context_patch = _git_output(config.repo_root, ["diff", "--unified=0", diff_ref, "--", path])
+        patch = full_patch_by_path.get(path, "")
+        zero_context_patch = zero_context_patch_by_path.get(path, "")
         changed_files.append(
             ChangedFile(
                 path=path,
@@ -150,6 +156,49 @@ def _parse_line_spans(patch_text: str) -> list[LineSpan]:
             continue
         spans.append(LineSpan(start=start, end=start + count - 1))
     return spans
+
+
+def _split_patch_by_path(patch_text: str) -> dict[str, str]:
+    blocks: dict[str, str] = {}
+    current_lines: list[str] = []
+
+    for line in patch_text.splitlines():
+        if line.startswith("diff --git "):
+            _store_patch_block(blocks, current_lines)
+            current_lines = [line]
+            continue
+        if current_lines:
+            current_lines.append(line)
+
+    _store_patch_block(blocks, current_lines)
+    return blocks
+
+
+def _store_patch_block(blocks: dict[str, str], lines: list[str]) -> None:
+    if not lines:
+        return
+
+    old_path: str | None = None
+    new_path: str | None = None
+    for line in lines:
+        if line.startswith("--- "):
+            old_path = _normalize_patch_path(line[4:])
+        elif line.startswith("+++ "):
+            new_path = _normalize_patch_path(line[4:])
+
+    path = new_path if new_path and new_path != "/dev/null" else old_path
+    if path is None:
+        return
+    blocks[path] = "\n".join(lines)
+
+
+def _normalize_patch_path(raw_path: str) -> str:
+    stripped = raw_path.strip()
+    if stripped in {"/dev/null", "dev/null"}:
+        return "/dev/null"
+    if stripped.startswith(("a/", "b/")):
+        stripped = stripped[2:]
+    return stripped.strip('"')
 
 
 def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:

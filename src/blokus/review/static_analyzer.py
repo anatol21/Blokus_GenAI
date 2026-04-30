@@ -458,18 +458,37 @@ class StaticAnalyzer:
         return None
 
     def _run_command(self, args: list[str]) -> ToolRun:
-        completed = subprocess.run(
-            args,
-            cwd=self.config.repo_root,
-            capture_output=True,
-            text=True,
-        )
-        return ToolRun(
-            command=" ".join(args),
-            returncode=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-        )
+        try:
+            completed = subprocess.run(
+                args,
+                cwd=self.config.repo_root,
+                capture_output=True,
+                text=True,
+                timeout=self.config.provider.timeout_seconds,
+            )
+            return ToolRun(
+                command=" ".join(args),
+                returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+            )
+        except subprocess.TimeoutExpired as exc:
+            stdout = _coerce_stream_text(exc.stdout)
+            stderr = _coerce_stream_text(exc.stderr)
+            return ToolRun(
+                command=" ".join(args),
+                returncode=124,
+                stdout=stdout,
+                stderr=stderr + f"\nCommand timed out after {self.config.provider.timeout_seconds} seconds.",
+            )
+
+
+def _coerce_stream_text(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
 
 
 def _lookup_changed_file(context: ReviewContext, path: str, line_number: int) -> ChangedFile | None:

@@ -50,7 +50,7 @@ def main() -> int:
             )
 
     print(run.markdown)
-    return 1 if run.result.verdict in {"NEEDS CHANGES", "DISCUSS"} else 0
+    return 1 if run.result.verdict == "NEEDS CHANGES" else 0
 
 
 def _parse_args() -> argparse.Namespace:

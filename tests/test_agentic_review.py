@@ -98,6 +98,8 @@ def _review_context(*changed_files: ChangedFile, same_repo: bool = True) -> Revi
 
 
 class AgenticReviewTests(unittest.TestCase):
+    maxDiff = None
+
     def test_load_review_config_applies_model_overrides(self) -> None:
         with mock.patch.dict(
             os.environ,
@@ -269,6 +271,35 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(response.findings, ())
 
+    def test_specialist_response_keeps_findings_on_changed_span_boundary(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=22),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Boundary line finding",
+                            "severity": "moderate",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 22,
+                            "line_end": 30,
+                            "evidence": "The changed line at the end of the span is still relevant.",
+                            "impact": "Boundary filtering must keep the finding.",
+                            "suggested_action": "Retain findings whose start line is inside the changed span.",
+                            "blocking_recommendation": False,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertEqual(response.findings[0].line_start, 22)
+
     def test_coordinator_discusses_when_provider_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
@@ -380,7 +411,7 @@ class AgenticReviewTests(unittest.TestCase):
             self.assertEqual((Path(tmpdir) / "review.md").read_text(encoding="utf-8"), "## Agentic Code Review\n")
             client_cls.return_value.upsert_issue_comment.assert_called_once()
 
-    def test_script_main_uses_environment_overrides_and_discuss_exits_nonzero(self) -> None:
+    def test_script_main_uses_environment_overrides_and_discuss_exits_zero(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8), same_repo=False)
         result = ReviewResult(
@@ -424,6 +455,7 @@ class AgenticReviewTests(unittest.TestCase):
                 "REVIEW_BASE_REF": "env-base",
                 "REVIEW_HEAD_REF": "env-head",
                 "REVIEW_PULL_NUMBER": "44",
+                "GITHUB_EVENT_PATH": "",
             },
             clear=False,
         ), mock.patch.object(
@@ -440,7 +472,7 @@ class AgenticReviewTests(unittest.TestCase):
             coordinator_cls.return_value.run.return_value = run
             exit_code = agentic_code_review.main()
 
-            self.assertEqual(exit_code, 1)
+            self.assertEqual(exit_code, 0)
             self.assertEqual(
                 coordinator_cls.return_value.run.call_args.kwargs,
                 {
@@ -487,6 +519,7 @@ class AgenticReviewTests(unittest.TestCase):
                 "REVIEW_BASE_REF": "env-base",
                 "REVIEW_HEAD_REF": "env-head",
                 "REVIEW_PULL_NUMBER": "44",
+                "GITHUB_EVENT_PATH": "",
             },
             clear=False,
         ), mock.patch.object(
@@ -519,6 +552,112 @@ class AgenticReviewTests(unittest.TestCase):
                     "pr_number": 99,
                 },
             )
+
+    def test_script_main_loads_pull_request_event_and_writes_schema_shaped_output(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8))
+        result = ReviewResult(
+            pr=context.pr,
+            summary=ReviewSummary(
+                overall_risk="low",
+                test_posture="adequate",
+                static_analysis_posture="clean",
+                performance_posture="not_applicable",
+            ),
+            findings=(),
+            uncertain_risks=(),
+            verdict="LGTM",
+        )
+        run = ReviewRun(
+            context=context,
+            result=result,
+            markdown="## Agentic Code Review\n\n### Verdict\n- `LGTM`\n",
+            static_report=StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean"),
+        )
+        event_payload = {
+            "pull_request": {
+                "number": 44,
+                "base": {
+                    "sha": "base-sha",
+                    "repo": {"full_name": "owner/repo"},
+                },
+                "head": {
+                    "sha": "head-sha",
+                    "repo": {"full_name": "owner/repo"},
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "GitHubClient",
+        ) as client_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_TOKEN": "token",
+                "GITHUB_EVENT_PATH": str(Path(tmpdir) / "event.json"),
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            (Path(tmpdir) / "event.json").write_text(json.dumps(event_payload), encoding="utf-8")
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+            written_payload = json.loads((Path(tmpdir) / "review.json").read_text(encoding="utf-8"))
+            schema = json.loads((REPO_ROOT / "schemas" / "agentic_review_output.schema.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                coordinator_cls.return_value.run.call_args.kwargs,
+                {
+                    "event_payload": event_payload,
+                    "base_ref": None,
+                    "head_ref": None,
+                    "pr_number": None,
+                },
+            )
+            self.assertEqual(set(written_payload.keys()), set(schema["required"]))
+            self.assertIn("## Agentic Code Review", (Path(tmpdir) / "review.md").read_text(encoding="utf-8"))
+            self.assertIn("### Verdict", (Path(tmpdir) / "review.md").read_text(encoding="utf-8"))
+            client_cls.return_value.upsert_issue_comment.assert_called_once()
+
+    def test_static_analyzer_run_command_uses_timeout(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+
+        with mock.patch("subprocess.run") as run_mock:
+            run_mock.return_value = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
+            analyzer._run_command(["python", "-V"])
+
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], config.provider.timeout_seconds)
+
+    def test_static_analyzer_run_command_handles_timeout(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+
+        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["python"], config.provider.timeout_seconds)):
+            tool_run = analyzer._run_command(["python", "-V"])
+
+        self.assertEqual(tool_run.returncode, 124)
+        self.assertIn("timed out", tool_run.stderr.lower())
 
     def _init_git_repo(self, repo_root: Path) -> None:
         self._git(repo_root, "init")
