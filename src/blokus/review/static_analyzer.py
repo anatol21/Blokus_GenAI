@@ -58,9 +58,9 @@ class StaticAnalyzer:
         commands: list[str] = []
         unavailable_tools = False
 
-        if python_files or shell_files:
+        if python_files:
             compileall_run = self._run_command(
-                [sys.executable, "-m", "compileall", "src", "scripts", "tests"]
+                [sys.executable, "-m", "compileall", *[item.path for item in python_files]]
             )
             commands.append(compileall_run.command)
             findings.extend(self._parse_compileall(context, compileall_run))

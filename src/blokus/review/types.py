@@ -43,6 +43,7 @@ class ChangedFile:
     executable: bool
     categories: tuple[str, ...]
     old_path: str | None = None
+    performance_sensitive: bool = False
 
     def touches_line(self, line_number: int) -> bool:
         return any(span.contains(line_number) for span in self.line_spans)

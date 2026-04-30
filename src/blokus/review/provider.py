@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -22,6 +23,7 @@ class OpenRouterClient:
     api_key: str
     base_url: str
     timeout_seconds: int
+    max_retries: int
 
     @classmethod
     def from_env(cls, config: ReviewConfig) -> "OpenRouterClient":
@@ -32,6 +34,7 @@ class OpenRouterClient:
             api_key=api_key,
             base_url=config.provider.base_url.rstrip("/"),
             timeout_seconds=config.provider.timeout_seconds,
+            max_retries=config.provider.max_retries,
         )
 
     def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
@@ -52,13 +55,32 @@ class OpenRouterClient:
         request.add_header("Authorization", f"Bearer {self.api_key}")
         request.add_header("Accept", "application/json")
 
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise ProviderUnavailable(f"OpenRouter request failed: {exc}") from exc
+        attempt_count = self.max_retries + 1
+        for attempt in range(1, attempt_count + 1):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                break
+            except HTTPError as exc:
+                if attempt == attempt_count or not _is_retryable_http_error(exc):
+                    raise ProviderUnavailable(f"OpenRouter request failed: {exc}") from exc
+                _sleep_before_retry(attempt)
+            except (URLError, TimeoutError) as exc:
+                if attempt == attempt_count:
+                    raise ProviderUnavailable(
+                        f"OpenRouter request failed after {attempt_count} attempts: {exc}"
+                    ) from exc
+                _sleep_before_retry(attempt)
 
         try:
             return str(body["choices"][0]["message"]["content"]).strip()
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderUnavailable("OpenRouter response did not contain a usable message.") from exc
+
+
+def _is_retryable_http_error(error: HTTPError) -> bool:
+    return error.code in {408, 425, 429, 500, 502, 503, 504}
+
+
+def _sleep_before_retry(attempt: int) -> None:
+    time.sleep(min(0.25 * attempt, 1.0))

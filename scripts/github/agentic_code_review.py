@@ -73,7 +73,12 @@ def _parse_args() -> argparse.Namespace:
 
 def _env_int(name: str) -> int | None:
     raw = os.environ.get(name)
-    return int(raw) if raw else None
+    if not raw:
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return None
 
 
 if __name__ == "__main__":

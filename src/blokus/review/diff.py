@@ -75,15 +75,8 @@ def build_review_context(
 def should_run_performance_review(config: ReviewConfig, context: ReviewContext) -> bool:
     """Return whether the performance specialist should run."""
 
-    path_markers = config.performance.path_markers
-    diff_markers = config.performance.diff_markers
-
-    for changed_file in context.executable_files:
-        if any(marker in changed_file.path for marker in path_markers):
-            return True
-        if any(marker in changed_file.patch for marker in diff_markers):
-            return True
-    return False
+    del config
+    return any(changed_file.performance_sensitive for changed_file in context.executable_files)
 
 
 def _resolve_refs(
@@ -107,12 +100,7 @@ def _resolve_refs(
 def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> tuple[ChangedFile, ...]:
     diff_ref = f"{base_ref}...{head_ref}"
     name_status_lines = _git_lines(config.repo_root, ["diff", "--name-status", diff_ref])
-    full_patch_by_path = _split_patch_by_path(
-        _git_output(config.repo_root, ["diff", "--unified=3", diff_ref])
-    )
-    zero_context_patch_by_path = _split_patch_by_path(
-        _git_output(config.repo_root, ["diff", "--unified=0", diff_ref])
-    )
+    full_patch_by_path = _split_patch_by_path(_git_output(config.repo_root, ["diff", "--unified=3", diff_ref]))
     changed_files: list[ChangedFile] = []
 
     for line in name_status_lines:
@@ -123,16 +111,16 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
         old_path = parts[1] if status.startswith(("R", "C")) and len(parts) > 2 else None
         path = parts[-1]
         patch = full_patch_by_path.get(path, "")
-        zero_context_patch = zero_context_patch_by_path.get(path, "")
         changed_files.append(
             ChangedFile(
                 path=path,
                 status=status,
                 patch=patch,
-                line_spans=tuple(_parse_line_spans(zero_context_patch)),
+                line_spans=tuple(_parse_line_spans(patch)),
                 executable=_is_executable_path(path),
                 categories=tuple(_categorize_path(path)),
                 old_path=old_path,
+                performance_sensitive=_is_performance_sensitive(config, path, patch),
             )
         )
 
@@ -146,15 +134,44 @@ def _current_branch(repo_root: Path) -> str:
 
 def _parse_line_spans(patch_text: str) -> list[LineSpan]:
     spans: list[LineSpan] = []
+    current_line: int | None = None
+    span_start: int | None = None
+
     for raw_line in patch_text.splitlines():
+        if raw_line.startswith("diff --git "):
+            if span_start is not None and current_line is not None:
+                spans.append(LineSpan(start=span_start, end=current_line - 1))
+            current_line = None
+            span_start = None
+            continue
+
         match = _HUNK_RE.match(raw_line)
-        if not match:
+        if match:
+            if span_start is not None and current_line is not None:
+                spans.append(LineSpan(start=span_start, end=current_line - 1))
+            current_line = int(match.group("start"))
+            span_start = None
             continue
-        start = int(match.group("start"))
-        count = int(match.group("count") or "1")
-        if count == 0:
+
+        if current_line is None or raw_line.startswith(("--- ", "+++ ")):
             continue
-        spans.append(LineSpan(start=start, end=start + count - 1))
+
+        if raw_line.startswith("+"):
+            if span_start is None:
+                span_start = current_line
+            current_line += 1
+            continue
+
+        if raw_line.startswith("-") or raw_line.startswith("\\"):
+            continue
+
+        if span_start is not None:
+            spans.append(LineSpan(start=span_start, end=current_line - 1))
+            span_start = None
+        current_line += 1
+
+    if span_start is not None and current_line is not None:
+        spans.append(LineSpan(start=span_start, end=current_line - 1))
     return spans
 
 
@@ -199,6 +216,12 @@ def _normalize_patch_path(raw_path: str) -> str:
     if stripped.startswith(("a/", "b/")):
         stripped = stripped[2:]
     return stripped.strip('"')
+
+
+def _is_performance_sensitive(config: ReviewConfig, path: str, patch: str) -> bool:
+    if any(marker in path for marker in config.performance.path_markers):
+        return True
+    return any(marker in patch for marker in config.performance.diff_markers)
 
 
 def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:

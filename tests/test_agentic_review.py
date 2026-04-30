@@ -6,11 +6,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
+from urllib.error import URLError
 from unittest import mock
 
+import blokus.review.diff as review_diff
 from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
+from blokus.review.provider import OpenRouterClient, ProviderUnavailable
 from blokus.review.specialists import _parse_specialist_response
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer, ToolRun
 from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
@@ -59,7 +62,14 @@ def _make_config(repo_root: Path) -> ReviewConfig:
     )
 
 
-def _changed_file(path: str, *, line_start: int = 1, line_end: int = 1, patch: str = "") -> ChangedFile:
+def _changed_file(
+    path: str,
+    *,
+    line_start: int = 1,
+    line_end: int = 1,
+    patch: str = "",
+    performance_sensitive: bool = False,
+) -> ChangedFile:
     categories = []
     if path.endswith(".py"):
         categories.append("python")
@@ -78,6 +88,7 @@ def _changed_file(path: str, *, line_start: int = 1, line_end: int = 1, patch: s
         line_spans=(LineSpan(line_start, line_end),),
         executable=path.endswith(".py") or path.endswith(".sh"),
         categories=tuple(categories),
+        performance_sensitive=performance_sensitive,
     )
 
 
@@ -136,6 +147,36 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual([item.path for item in context.changed_files], ["src/demo.py"])
         self.assertEqual([item.path for item in context.executable_files], ["src/demo.py"])
         self.assertTrue(context.executable_files[0].touches_line(1))
+
+    def test_load_changed_files_uses_single_patch_diff_and_precise_line_spans(self) -> None:
+        config = _make_config(REPO_ROOT)
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -1,5 +1,5 @@",
+                " one",
+                " two",
+                "-three",
+                "+three updated",
+                " four",
+                " five",
+            ]
+        )
+
+        with mock.patch.object(review_diff, "_git_lines", return_value=["M\tsrc/demo.py"]), mock.patch.object(
+            review_diff,
+            "_git_output",
+            return_value=patch_text,
+        ) as git_output:
+            changed_files = review_diff._load_changed_files(config, "base", "head")
+
+        self.assertEqual(len(changed_files), 1)
+        self.assertEqual(changed_files[0].line_spans, (LineSpan(3, 3),))
+        self.assertEqual(git_output.call_count, 1)
+        git_output.assert_called_once_with(config.repo_root, ["diff", "--unified=3", "base...head"])
 
     def test_static_analyzer_heuristics_flag_cli_gap(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -340,7 +381,9 @@ class AgenticReviewTests(unittest.TestCase):
 
     def test_should_run_performance_review_triggers_for_marker_path(self) -> None:
         config = _make_config(REPO_ROOT)
-        context = _review_context(_changed_file("src/blokus/engine.py", line_start=8, line_end=8))
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=8, line_end=8, performance_sensitive=True)
+        )
 
         self.assertTrue(should_run_performance_review(config, context))
 
@@ -352,6 +395,7 @@ class AgenticReviewTests(unittest.TestCase):
                 line_start=10,
                 line_end=12,
                 patch="@@ -0,0 +10,3 @@\n+for item in items:\n+    cache[key] = item\n+return cache\n",
+                performance_sensitive=True,
             )
         )
 
@@ -571,6 +615,69 @@ class AgenticReviewTests(unittest.TestCase):
                     "base_ref": "cli-base",
                     "head_ref": "cli-head",
                     "pr_number": 99,
+                },
+            )
+
+    def test_script_main_invalid_environment_pull_number_degrades_gracefully(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8))
+        result = ReviewResult(
+            pr=context.pr,
+            summary=ReviewSummary(
+                overall_risk="low",
+                test_posture="adequate",
+                static_analysis_posture="clean",
+                performance_posture="not_applicable",
+            ),
+            findings=(),
+            uncertain_risks=(),
+            verdict="LGTM",
+        )
+        run = ReviewRun(
+            context=context,
+            result=result,
+            markdown="## Agentic Code Review\nLGTM\n",
+            static_report=StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean"),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "REVIEW_BASE_REF": "env-base",
+                "REVIEW_HEAD_REF": "env-head",
+                "REVIEW_PULL_NUMBER": "PR-44",
+                "GITHUB_EVENT_PATH": "",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                coordinator_cls.return_value.run.call_args.kwargs,
+                {
+                    "event_payload": None,
+                    "base_ref": "env-base",
+                    "head_ref": "env-head",
+                    "pr_number": None,
                 },
             )
 
@@ -803,6 +910,82 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(tool_run.returncode, 124)
         self.assertIn("timed out", tool_run.stderr.lower())
+
+    def test_static_analyzer_limits_compileall_to_changed_python_files(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(_changed_file("src/blokus/cli.py", line_start=10, line_end=12))
+        invocations: list[list[str]] = []
+
+        def fake_run(args: list[str]) -> ToolRun:
+            invocations.append(args)
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(analyzer, "_discover_tool", return_value="/tool"), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            analyzer.analyze(context)
+
+        self.assertEqual(invocations[0], [sys.executable, "-m", "compileall", "src/blokus/cli.py"])
+
+    def test_static_analyzer_skips_compileall_for_shell_only_changes(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(_changed_file("scripts/check.sh", line_start=1, line_end=1))
+        invocations: list[list[str]] = []
+
+        def fake_run(args: list[str]) -> ToolRun:
+            invocations.append(args)
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(analyzer, "_discover_tool", return_value=None), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            analyzer.analyze(context)
+
+        self.assertEqual(invocations, [["bash", "-n", "scripts/check.sh"]])
+
+    def test_openrouter_client_retries_retryable_failures(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=2,
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "  LGTM  "}}]}
+        ).encode("utf-8")
+
+        with mock.patch("blokus.review.provider.time.sleep"), mock.patch(
+            "blokus.review.provider.urlopen",
+            side_effect=[URLError("temporary failure"), response],
+        ) as urlopen_mock:
+            result = client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+        self.assertEqual(result, "LGTM")
+        self.assertEqual(urlopen_mock.call_count, 2)
+
+    def test_openrouter_client_raises_after_retry_budget_is_exhausted(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=2,
+        )
+
+        with mock.patch("blokus.review.provider.time.sleep"), mock.patch(
+            "blokus.review.provider.urlopen",
+            side_effect=[URLError("temporary failure"), URLError("temporary failure"), URLError("still failing")],
+        ) as urlopen_mock:
+            with self.assertRaisesRegex(ProviderUnavailable, "after 3 attempts"):
+                client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+        self.assertEqual(urlopen_mock.call_count, 3)
 
     def _init_git_repo(self, repo_root: Path) -> None:
         self._git(repo_root, "init")
