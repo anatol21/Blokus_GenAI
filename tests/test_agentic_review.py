@@ -70,6 +70,7 @@ def _changed_file(
     patch: str = "",
     performance_sensitive: bool = False,
     patch_truncated: bool = False,
+    old_path: str | None = None,
 ) -> ChangedFile:
     categories = []
     if path.endswith(".py"):
@@ -89,6 +90,7 @@ def _changed_file(
         line_spans=(LineSpan(line_start, line_end),),
         executable=path.endswith(".py") or path.endswith(".sh"),
         categories=tuple(categories),
+        old_path=old_path,
         performance_sensitive=performance_sensitive,
         patch_truncated=patch_truncated,
     )
@@ -98,6 +100,8 @@ def _review_context(
     *changed_files: ChangedFile,
     same_repo: bool = True,
     raw_diff: str | None = None,
+    commits: tuple[str, ...] = ("fix issue",),
+    commit_context_truncated: bool = False,
 ) -> ReviewContext:
     executable_files = tuple(item for item in changed_files if item.executable)
     rendered_diff = (
@@ -114,11 +118,12 @@ def _review_context(
         base_ref="origin/main",
         head_ref="HEAD",
         branch_name="feature/fix-review",
-        commits=("fix issue",),
+        commits=commits,
         changed_files=tuple(changed_files),
         impact="moderate",
         bias_risks=("self-declared-correctness-bias", "misleading-task-bias"),
         same_repo=same_repo,
+        commit_context_truncated=commit_context_truncated,
         executable_files=executable_files,
         raw_diff=rendered_diff,
     )
@@ -472,6 +477,72 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(response.findings, ())
 
+    def test_specialist_response_normalizes_paths_and_matches_old_path(self) -> None:
+        files = (
+            _changed_file(
+                "src/blokus/new_engine.py",
+                old_path="src/blokus/old_engine.py",
+                line_start=20,
+                line_end=20,
+            ),
+        )
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Rename-aware path",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "`./src/blokus/old_engine.py`",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "The renamed file still has the issue.",
+                            "impact": "Review should keep renamed-file findings.",
+                            "suggested_action": "Map the old path to the new changed file.",
+                            "blocking_recommendation": True,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertEqual(response.findings[0].file, "src/blokus/new_engine.py")
+
+    def test_specialist_response_adds_uncertain_risk_for_unrecognized_path(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Unmatched path",
+                            "severity": "moderate",
+                            "confidence": "medium",
+                            "category": "correctness",
+                            "file": "./src/blokus/missing.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "The file path does not match the diff.",
+                            "impact": "The finding would otherwise disappear silently.",
+                            "suggested_action": "Normalize or reconcile the path.",
+                            "blocking_recommendation": False,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(response.findings, ())
+        self.assertEqual(len(response.uncertain_risks), 1)
+        self.assertIn("did not match the current diff", response.uncertain_risks[0].risk)
+
     def test_specialist_response_ignores_incomplete_findings(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
         response = _parse_specialist_response(
@@ -772,6 +843,39 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(uncertain_risks, [])
         self.assertFalse(truncated)
         self.assertEqual(started, {"correctness", "tests", "performance"})
+
+    def test_coordinator_adds_uncertain_risk_when_prompt_context_is_truncated(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        changed_files = tuple(
+            _changed_file(f"src/blokus/module_{index}.py", line_start=1, line_end=1)
+            for index in range(100)
+        )
+        context = _review_context(*changed_files, raw_diff="", commits=tuple(f"commit {i}" for i in range(30)))
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=False,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertFalse(truncated)
+        self.assertTrue(
+            any(risk.risk == "Commit or file-list context was truncated for scale." for risk in uncertain_risks)
+        )
 
     def test_coordinator_renders_each_patch_block_once_for_cached_bundles(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -1869,6 +1973,30 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(urlopen_mock.call_count, 1)
         sleep_mock.assert_not_called()
+
+    def test_openrouter_client_retries_invalid_json_response(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=2,
+        )
+        invalid_response = mock.MagicMock()
+        invalid_response.__enter__.return_value.read.return_value = b"{not-json"
+        valid_response = mock.MagicMock()
+        valid_response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "LGTM"}}]}
+        ).encode("utf-8")
+
+        with mock.patch("blokus.review.provider._sleep_before_retry") as sleep_mock, mock.patch(
+            "blokus.review.provider.urlopen",
+            side_effect=[invalid_response, valid_response],
+        ) as urlopen_mock:
+            result = client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+        self.assertEqual(result, "LGTM")
+        self.assertEqual(urlopen_mock.call_count, 2)
+        sleep_mock.assert_called_once_with(1)
 
     def test_diff_module_imports_cleanly_in_subprocess(self) -> None:
         result = subprocess.run(

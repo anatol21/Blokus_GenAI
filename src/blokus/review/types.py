@@ -182,6 +182,7 @@ class ReviewContext:
     impact: str
     bias_risks: tuple[str, ...]
     same_repo: bool
+    commit_context_truncated: bool = False
     executable_files: tuple[ChangedFile, ...] = field(default_factory=tuple)
     raw_diff: str = ""
 

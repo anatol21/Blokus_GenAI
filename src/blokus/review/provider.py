@@ -59,7 +59,8 @@ class OpenRouterClient:
         for attempt in range(1, attempt_count + 1):
             try:
                 with urlopen(request, timeout=self.timeout_seconds) as response:
-                    body = json.loads(response.read().decode("utf-8"))
+                    raw_body = response.read()
+                    body = json.loads(raw_body.decode("utf-8"))
                 break
             except HTTPError as exc:
                 if attempt == attempt_count or not _is_retryable_http_error(exc):
@@ -70,6 +71,10 @@ class OpenRouterClient:
                     raise ProviderUnavailable(
                         f"OpenRouter request failed after {attempt_count} attempts: {exc}"
                     ) from exc
+                _sleep_before_retry(attempt)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                if attempt == attempt_count:
+                    raise ProviderUnavailable("OpenRouter response was not valid JSON.") from exc
                 _sleep_before_retry(attempt)
 
         try:

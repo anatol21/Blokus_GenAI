@@ -10,7 +10,7 @@ from blokus.review.config import ReviewConfig
 from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
 from blokus.review.renderer import render_review_markdown
-from blokus.review.specialists import SpecialistRunner
+from blokus.review.specialists import SpecialistRunner, prompt_context_was_truncated
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer
 from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
 
@@ -188,6 +188,10 @@ class ReviewCoordinator:
         ]
         if performance_requested:
             specialist_specs.append(("performance", context.executable_files, executable_diff.text))
+        prompt_context_truncated = any(
+            prompt_context_was_truncated(context, files)
+            for _, files, _ in specialist_specs
+        )
 
         futures_by_specialist: dict[str, Future[SpecialistResponse]] = {}
         with ThreadPoolExecutor(max_workers=len(specialist_specs)) as executor:
@@ -210,6 +214,9 @@ class ReviewCoordinator:
                     response = _specialist_failure_response(specialist, exc)
                 findings.extend(response.findings)
                 uncertain_risks.extend(response.uncertain_risks)
+
+        if prompt_context_truncated:
+            _append_prompt_context_truncation_risk(uncertain_risks)
 
         return findings, uncertain_risks, all_changed_diff.truncated or executable_diff.truncated
 
@@ -387,6 +394,17 @@ def _append_diff_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
         risk="Diff context was truncated for scale.",
         reason_uncertain="One or more stored patches or rendered specialist diff bundles exceeded the internal size limits, so omitted hunks may not have been reviewed in full.",
         suggested_verification="Manually inspect the full git diff for very large PRs, especially omitted hunks or files not fully included in the review prompt.",
+    )
+    if any(existing.risk == risk.risk for existing in uncertain_risks):
+        return
+    uncertain_risks.append(risk)
+
+
+def _append_prompt_context_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
+    risk = UncertainRisk(
+        risk="Commit or file-list context was truncated for scale.",
+        reason_uncertain="The specialist prompts capped commit subjects or changed-path lists to stay within a bounded context window, so some metadata context was omitted.",
+        suggested_verification="Inspect large PRs manually when commit history or changed-file breadth may materially affect the review.",
     )
     if any(existing.risk == risk.risk for existing in uncertain_risks):
         return

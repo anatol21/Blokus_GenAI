@@ -4,13 +4,24 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from functools import cached_property
+from pathlib import PurePosixPath
 from typing import cast
 
 from blokus.review.config import ReviewConfig
 from blokus.review.prompts import load_prompt
 from blokus.review.provider import OpenRouterClient
 from blokus.review.types import ChangedFile, Finding, ReviewContext, SpecialistResponse, UncertainRisk, stable_finding_id
-from functools import cached_property
+
+MAX_PROMPT_FILES = 80
+MAX_PROMPT_COMMITS = 25
+
+
+@dataclass(frozen=True)
+class _PromptContextBlocks:
+    file_list: str
+    commit_block: str
+    truncated: bool
 
 @dataclass(frozen=True)
 class SpecialistRunner:
@@ -26,14 +37,11 @@ class SpecialistRunner:
     @cached_property
     def _specialist_prompts(self) -> dict[str, str]:
         return {
-
             "correctness": load_prompt(self.config, "review-correctness"),
-
             "tests": load_prompt(self.config, "review-tests"),
-
             "performance": load_prompt(self.config, "review-performance"),
-
         }
+
     def run(
         self,
         specialist: str,
@@ -67,22 +75,21 @@ def _build_user_prompt(
     files: tuple[ChangedFile, ...],
     rendered_diff: str,
 ) -> str:
-    file_list = "\n".join(f"- {changed_file.path}" for changed_file in files)
-    commit_block = "\n".join(f"- {commit}" for commit in context.commits) or "- none"
+    prompt_context = _build_prompt_context_blocks(context, files)
     bias_block = "\n".join(f"- {risk}" for risk in context.bias_risks)
 
     return f"""
 Review the following files from the current diff against the base ref.
 
 Files to review:
-{file_list}
+{prompt_context.file_list}
 
 Context:
 - Specialist: {specialist}
 - Overall impact: {context.impact}
 - Branch name: {context.branch_name}
 - Commits:
-{commit_block}
+{prompt_context.commit_block}
 - Bias risks to avoid:
 {bias_block}
 
@@ -127,7 +134,7 @@ def _parse_specialist_response(
     files: tuple[ChangedFile, ...],
 ) -> SpecialistResponse:
     data = _load_json_object(raw_response)
-    changed_paths = {changed_file.path: changed_file for changed_file in files}
+    changed_paths = _index_changed_paths(files)
     required_keys = {
         "title",
         "severity",
@@ -143,17 +150,23 @@ def _parse_specialist_response(
     }
 
     findings: list[Finding] = []
+    uncertain_risks: list[UncertainRisk] = []
+    unmatched_paths: set[str] = set()
     for item in _dict_list(data.get("findings")):
         if not required_keys.issubset(item):
             continue
-        path = str(item["file"])
+        raw_path = str(item["file"])
+        changed_file = _lookup_changed_file(raw_path, changed_paths)
+        if changed_file is None:
+            normalized_path = _normalize_specialist_path(raw_path)
+            if normalized_path:
+                unmatched_paths.add(normalized_path)
+            continue
+        path = changed_file.path
 
         line_start = _int_value(item.get("line_start"))
         line_end = _int_value(item.get("line_end"))
         if line_start is None or line_end is None:
-            continue
-        changed_file = changed_paths.get(path)
-        if changed_file is None:
             continue
         if changed_file.line_spans and not changed_file.touches_line(line_start):
             continue
@@ -176,7 +189,15 @@ def _parse_specialist_response(
             )
         )
 
-    uncertain_risks: list[UncertainRisk] = []
+    for unmatched_path in sorted(unmatched_paths):
+        uncertain_risks.append(
+            UncertainRisk(
+                risk="Specialist findings were discarded because their file path did not match the current diff.",
+                reason_uncertain=f"The specialist referenced `{unmatched_path}`, which could not be reconciled to a changed file path or rename target.",
+                suggested_verification="Inspect the specialist output and normalize the referenced path if the finding should apply to a changed file.",
+            )
+        )
+
     for item in _dict_list(data.get("uncertain_risks")):
         if not all(key in item for key in ("risk", "reason_uncertain", "suggested_verification")):
             continue
@@ -220,3 +241,76 @@ def _load_json_object(raw_response: str) -> dict[str, object]:
             return json.loads(raw_response[start : end + 1])
         except json.JSONDecodeError:
             return {"findings": [], "uncertain_risks": [], "note": "Invalid non-JSON specialist response."}
+
+
+def prompt_context_was_truncated(context: ReviewContext, files: tuple[ChangedFile, ...]) -> bool:
+    return _build_prompt_context_blocks(context, files).truncated
+
+
+def _build_prompt_context_blocks(
+    context: ReviewContext,
+    files: tuple[ChangedFile, ...],
+) -> _PromptContextBlocks:
+    file_paths = [changed_file.path for changed_file in files]
+    truncated = context.commit_context_truncated or len(context.commits) > MAX_PROMPT_COMMITS
+    file_list = _bullet_block(
+        file_paths[:MAX_PROMPT_FILES],
+        "... additional changed files omitted",
+        len(file_paths) > MAX_PROMPT_FILES,
+    )
+    commit_block = _bullet_block(
+        list(context.commits[:MAX_PROMPT_COMMITS]),
+        "... additional commit subjects omitted",
+        truncated,
+    )
+    return _PromptContextBlocks(
+        file_list=file_list or "- none",
+        commit_block=commit_block or "- none",
+        truncated=truncated or len(file_paths) > MAX_PROMPT_FILES,
+    )
+
+
+def _bullet_block(items: list[str], overflow_note: str, truncated: bool) -> str:
+    lines = [f"- {item}" for item in items]
+    if truncated:
+        lines.append(f"- {overflow_note}")
+    return "\n".join(lines)
+
+
+def _index_changed_paths(files: tuple[ChangedFile, ...]) -> dict[str, ChangedFile]:
+    changed_paths: dict[str, ChangedFile] = {}
+    for changed_file in files:
+        for candidate in (changed_file.path, changed_file.old_path):
+            normalized = _normalize_specialist_path(candidate)
+            if normalized:
+                changed_paths[normalized] = changed_file
+    return changed_paths
+
+
+def _lookup_changed_file(path: str, changed_paths: dict[str, ChangedFile]) -> ChangedFile | None:
+    normalized = _normalize_specialist_path(path)
+    if not normalized:
+        return None
+    direct_match = changed_paths.get(normalized)
+    if direct_match is not None:
+        return direct_match
+
+    suffix_matches = {
+        changed_file.path: changed_file
+        for candidate, changed_file in changed_paths.items()
+        if normalized.endswith(f"/{candidate}") or candidate.endswith(f"/{normalized}")
+    }
+    if len(suffix_matches) == 1:
+        return next(iter(suffix_matches.values()))
+    return None
+
+
+def _normalize_specialist_path(path: object) -> str:
+    if path is None:
+        return ""
+    normalized = str(path).strip().strip("`'\"").replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    if not normalized or normalized == ".":
+        return ""
+    return PurePosixPath(normalized).as_posix()

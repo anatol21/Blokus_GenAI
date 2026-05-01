@@ -17,6 +17,7 @@ from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayl
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performance|refactor)\b", re.IGNORECASE)
 MAX_STORED_PATCH_CHARS = 16_000
+MAX_REVIEW_CONTEXT_COMMITS = 25
 _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 
 
@@ -170,7 +171,11 @@ def build_review_context(
     base_sha = _git_output(config.repo_root, ["rev-parse", base_value]).strip()
     head_sha = _git_output(config.repo_root, ["rev-parse", head_value]).strip()
     branch_name = _current_branch(config.repo_root)
-    commits = _git_lines(config.repo_root, ["log", "--format=%s", f"{base_sha}..{head_sha}"])
+    commits = _git_lines(
+        config.repo_root,
+        ["log", f"-n{MAX_REVIEW_CONTEXT_COMMITS + 1}", "--format=%s", f"{base_sha}..{head_sha}"],
+    )
+    commit_context_truncated = len(commits) > MAX_REVIEW_CONTEXT_COMMITS
     changed_files = _load_changed_files(config, base_sha, head_sha)
     included_files = tuple(
         changed_file for changed_file in changed_files if not _is_excluded(config, changed_file.path)
@@ -182,11 +187,12 @@ def build_review_context(
         base_ref=base_value,
         head_ref=head_value,
         branch_name=branch_name,
-        commits=tuple(commits),
+        commits=tuple(commits[:MAX_REVIEW_CONTEXT_COMMITS]),
         changed_files=included_files,
         impact=_classify_impact(included_files),
         bias_risks=_infer_bias_risks(branch_name, commits),
         same_repo=same_repo,
+        commit_context_truncated=commit_context_truncated,
         executable_files=executable_files,
         raw_diff="",
     )

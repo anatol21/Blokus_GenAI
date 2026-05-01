@@ -105,6 +105,55 @@ def _make_run(*, same_repo: bool, verdict: str) -> ReviewRun:
 
 
 class AgenticCodeReviewCliTests(unittest.TestCase):
+    def test_main_loads_event_payload_and_forwards_it_to_coordinator(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+        event_payload = {
+            "pull_request": {
+                "number": 44,
+                "base": {"sha": "base-sha", "repo": {"full_name": "owner/repo"}},
+                "head": {"sha": "head-sha", "repo": {"full_name": "fork/repo"}},
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "load_event_payload",
+            return_value=event_payload,
+        ) as load_event_payload, mock.patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": str(Path(tmpdir) / "event.json")},
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            Path(tmpdir, "event.json").write_text("{}", encoding="utf-8")
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            load_event_payload.assert_called_once_with(str(Path(tmpdir) / "event.json"))
+            self.assertIs(
+                coordinator_cls.return_value.run.call_args.kwargs["event_payload"],
+                event_payload,
+            )
+
     def test_main_writes_artifacts_and_posts_same_repo_comment(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=True, verdict="LGTM")
@@ -187,6 +236,46 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertTrue((Path(tmpdir) / "review.json").exists())
             self.assertTrue((Path(tmpdir) / "review.md").exists())
             client_cls.assert_not_called()
+
+    def test_main_uses_default_artifact_paths(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+        original_cwd = Path.cwd()
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_WORKSPACE": tmpdir,
+                "GITHUB_EVENT_PATH": "",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            ["agentic_code_review.py"],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+            try:
+                os.chdir(tmpdir)
+                exit_code = agentic_code_review.main()
+            finally:
+                os.chdir(original_cwd)
+
+            self.assertEqual(exit_code, 0)
+            artifact_dir = Path(tmpdir) / "artifacts" / "agentic-review"
+            self.assertTrue((artifact_dir / "review.json").exists())
+            self.assertTrue((artifact_dir / "review.md").exists())
+            payload = json.loads((artifact_dir / "review.json").read_text(encoding="utf-8"))
+            self.assertIn("summary", payload)
+            self.assertIn("findings", payload)
+            self.assertIn("`LGTM`", (artifact_dir / "review.md").read_text(encoding="utf-8"))
 
     def test_module_entrypoint_imports_cleanly_from_repo_root(self) -> None:
         result = subprocess.run(
