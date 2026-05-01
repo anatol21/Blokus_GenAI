@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import fnmatch
+from functools import lru_cache
 import re
 import subprocess
 import threading
@@ -156,7 +157,8 @@ class _PatchAccumulator:
     def _track_performance(self, line: str) -> None:
         if self.performance_sensitive:
             return
-        if any(marker in line for marker in self.config.performance.diff_markers):
+        diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
+        if diff_marker_pattern is not None and diff_marker_pattern.search(line):
             self.performance_sensitive = True
             return
         path = self.new_path or self.old_path
@@ -362,6 +364,14 @@ def _parse_diff_header_paths(line: str) -> tuple[str | None, str | None]:
         return None, None
     old_path, new_path = parts[2], parts[3]
     return _normalize_patch_path(old_path), _normalize_patch_path(new_path)
+
+
+@lru_cache(maxsize=None)
+def _diff_marker_pattern(markers: tuple[str, ...]) -> re.Pattern[str] | None:
+    escaped_markers = [re.escape(marker) for marker in markers if marker]
+    if not escaped_markers:
+        return None
+    return re.compile("|".join(escaped_markers))
 
 
 def _nested_sha(value: object) -> str | None:

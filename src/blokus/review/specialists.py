@@ -302,14 +302,16 @@ def _lookup_changed_file(path: str, changed_paths: dict[str, ChangedFile]) -> Ch
     if direct_match is not None:
         return direct_match
 
-    suffix_matches = {
-        changed_file.path: changed_file
-        for candidate, changed_file in changed_paths.items()
-        if normalized.endswith(f"/{candidate}") or candidate.endswith(f"/{normalized}")
-    }
-    if len(suffix_matches) == 1:
-        return next(iter(suffix_matches.values()))
-    return None
+    suffix_match: ChangedFile | None = None
+    for candidate, changed_file in changed_paths.items():
+        if not (normalized.endswith(f"/{candidate}") or candidate.endswith(f"/{normalized}")):
+            continue
+        if suffix_match is None:
+            suffix_match = changed_file
+            continue
+        if suffix_match.path != changed_file.path:
+            return None
+    return suffix_match
 
 
 def _normalize_specialist_path(path: object) -> str:

@@ -145,6 +145,37 @@ class AgenticReviewTests(unittest.TestCase):
             self.assertEqual(config.model_for("correctness"), "env-correctness")
             self.assertEqual(config.model_for("tests"), "env-default")
 
+    def test_load_review_config_rejects_missing_config_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(ValueError, "Agentic review config was not found"):
+                load_review_config(repo_root=tmpdir)
+
+    def test_load_review_config_rejects_invalid_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".github").mkdir()
+            (repo_root / ".github" / "agentic-review.toml").write_text("not = [valid", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "is not valid TOML"):
+                load_review_config(repo_root=repo_root)
+
+    def test_validate_provider_rejects_negative_retry_budget(self) -> None:
+        config = replace(_make_config(REPO_ROOT), provider=ProviderConfig(
+            name="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            timeout_seconds=30,
+            max_retries=-1,
+        ))
+
+        with self.assertRaisesRegex(ValueError, "max_retries"):
+            config.validate_provider()
+
+    def test_model_for_requires_default_model(self) -> None:
+        config = replace(_make_config(REPO_ROOT), models={"correctness": "correctness-model"})
+
+        with self.assertRaisesRegex(ValueError, "models.default"):
+            config.model_for("tests")
+
     def test_build_review_context_filters_excluded_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
@@ -247,6 +278,22 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertTrue(changed_files[0].performance_sensitive)
         self.assertLessEqual(len(changed_files[0].patch), review_diff.MAX_STORED_PATCH_CHARS)
         self.assertIn("truncated for scale", changed_files[0].patch)
+
+    def test_patch_accumulator_marks_performance_sensitive_from_regex_markers(self) -> None:
+        accumulator = review_diff._PatchAccumulator(_make_config(REPO_ROOT))
+        for line in (
+            "diff --git a/src/demo.py b/src/demo.py",
+            "--- a/src/demo.py",
+            "+++ b/src/demo.py",
+            "@@ -1,1 +1,1 @@",
+            "+cache lookup result",
+        ):
+            accumulator.add_line(line)
+
+        block = accumulator.build()
+
+        self.assertIsNotNone(block)
+        self.assertTrue(cast(review_diff._PatchBlock, block).performance_sensitive)
 
     def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
         patch_text = "\n".join(
@@ -2247,6 +2294,17 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(result, "LGTM")
         self.assertEqual(urlopen_mock.call_count, 2)
         sleep_mock.assert_called_once_with(1)
+
+    def test_openrouter_client_rejects_negative_retry_budget(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=-1,
+        )
+
+        with self.assertRaisesRegex(ProviderUnavailable, "max_retries"):
+            client.complete(model="gpt", system_prompt="sys", user_prompt="user")
 
     def test_diff_module_imports_cleanly_in_subprocess(self) -> None:
         result = subprocess.run(

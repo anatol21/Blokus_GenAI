@@ -64,7 +64,13 @@ class ReviewConfig:
         default_override = os.environ.get("REVIEW_MODEL_DEFAULT")
         if default_override:
             return default_override
-        return self.models.get(specialist, self.models["default"])
+        specialist_model = self.models.get(specialist, "").strip()
+        if specialist_model:
+            return specialist_model
+        default_model = self.models.get("default", "").strip()
+        if default_model:
+            return default_model
+        raise ValueError("Review config must define a non-empty `models.default` value.")
 
     def validate_provider(self) -> None:
         if self.provider.name != "openrouter":
@@ -72,6 +78,10 @@ class ReviewConfig:
                 f"Unsupported review provider `{self.provider.name}`. "
                 "Only `openrouter` is implemented in v1."
             )
+        if self.provider.max_retries < 0:
+            raise ValueError("Review provider `max_retries` must be greater than or equal to 0.")
+        if not self.models.get("default", "").strip():
+            raise ValueError("Review config must define a non-empty `models.default` value.")
 
 
 def load_review_config(path: str | Path | None = None, *, repo_root: str | Path | None = None) -> ReviewConfig:
@@ -79,14 +89,21 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
 
     root = Path(repo_root or Path.cwd()).resolve()
     config_path = root / (Path(path) if path is not None else Path(".github/agentic-review.toml"))
-    raw = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        raw_text = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ValueError(f"Agentic review config was not found at `{config_path}`.") from exc
+    try:
+        raw = tomllib.loads(raw_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Agentic review config at `{config_path}` is not valid TOML: {exc}") from exc
 
     provider_block = raw["provider"]
     performance_block = raw["performance"]
     heuristics_block = raw["heuristics"]
     models_block = raw["models"]
 
-    return ReviewConfig(
+    config = ReviewConfig(
         repo_root=root,
         max_findings=int(raw["max_findings"]),
         excluded_globs=tuple(raw["excluded_globs"]),
@@ -113,3 +130,5 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
         ),
         models={str(key): str(value) for key, value in models_block.items()},
     )
+    config.validate_provider()
+    return config

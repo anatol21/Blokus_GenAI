@@ -38,6 +38,8 @@ class OpenRouterClient:
         )
 
     def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+        if self.max_retries < 0:
+            raise ProviderUnavailable("OpenRouter `max_retries` must be greater than or equal to 0.")
         payload = {
             "model": model,
             "temperature": 0,
@@ -56,6 +58,7 @@ class OpenRouterClient:
         request.add_header("Accept", "application/json")
 
         attempt_count = self.max_retries + 1
+        body: object | None = None
         for attempt in range(1, attempt_count + 1):
             try:
                 with urlopen(request, timeout=self.timeout_seconds) as response:
@@ -76,6 +79,9 @@ class OpenRouterClient:
                 if attempt == attempt_count:
                     raise ProviderUnavailable("OpenRouter response was not valid JSON.") from exc
                 _sleep_before_retry(attempt)
+
+        if body is None:
+            raise ProviderUnavailable("OpenRouter request did not produce a response body.")
 
         try:
             return str(body["choices"][0]["message"]["content"]).strip()
