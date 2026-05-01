@@ -348,7 +348,7 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertTrue(block.analysis_truncated)
         self.assertFalse(block.performance_sensitive)
-        self.assertEqual(block.line_spans, (LineSpan(1, 5),))
+        self.assertEqual(block.line_spans, (LineSpan(1, 6),))
 
     def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
         patch_text = "\n".join(
@@ -360,6 +360,24 @@ class AgenticReviewTests(unittest.TestCase):
                 "@@ -10,2 +12,0 @@",
                 "-old value",
                 "-other old value",
+            ]
+        )
+
+        spans = review_diff._parse_line_spans(patch_text)
+
+        self.assertEqual(spans, [LineSpan(12, 12)])
+
+    def test_parse_line_spans_keeps_deletion_anchor_when_hunk_has_trailing_context(self) -> None:
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -10,2 +12,0 @@",
+                "-old value",
+                "-other old value",
+                " context line after deletion",
             ]
         )
 
@@ -538,6 +556,39 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(len(response.findings), 1)
         self.assertEqual(response.findings[0].title, "Valid")
+
+    def test_specialist_response_caps_raw_findings_inspection(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        payload = json.dumps(
+            {
+                "findings": [
+                    {
+                        "title": f"Candidate {index}",
+                        "severity": "moderate",
+                        "confidence": "high",
+                        "category": "correctness",
+                        "file": "src/blokus/engine.py",
+                        "line_start": 20,
+                        "line_end": 20,
+                        "evidence": "Candidate finding.",
+                        "impact": "Candidate impact.",
+                        "suggested_action": "Candidate action.",
+                        "blocking_recommendation": False,
+                    }
+                    for index in range(150)
+                ]
+            }
+        )
+
+        with mock.patch("blokus.review.specialists._lookup_changed_file") as lookup_changed_file:
+            lookup_changed_file.side_effect = lambda path, changed_paths: changed_paths["src/blokus/engine.py"]
+            response = _parse_specialist_response(payload, "correctness", files)
+
+        self.assertEqual(len(response.findings), 3)
+        self.assertLessEqual(lookup_changed_file.call_count, 3)
+        self.assertTrue(
+            any(risk.risk == "Specialist findings were truncated for scale." for risk in response.uncertain_risks)
+        )
 
     def test_specialist_response_parses_uncertain_risks_and_note(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)

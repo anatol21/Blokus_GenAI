@@ -105,6 +105,29 @@ def _make_run(*, same_repo: bool, verdict: str) -> ReviewRun:
 
 
 class AgenticCodeReviewCliTests(unittest.TestCase):
+    def test_lazy_imports_bootstrap_runtime_dependencies(self) -> None:
+        repo_root = str(REPO_ROOT)
+        src_root = str(REPO_ROOT / "src")
+        trimmed_sys_path = [entry for entry in sys.path if entry not in {repo_root, src_root}]
+
+        with mock.patch.multiple(
+            agentic_code_review,
+            load_review_config=None,
+            ReviewCoordinator=None,
+            GitHubClient=None,
+            load_event_payload=None,
+            COMMENT_MARKERS=None,
+        ), mock.patch.object(sys, "path", list(trimmed_sys_path)):
+            agentic_code_review._lazy_imports()
+
+            self.assertIsNotNone(agentic_code_review.load_review_config)
+            self.assertIsNotNone(agentic_code_review.ReviewCoordinator)
+            self.assertIsNotNone(agentic_code_review.GitHubClient)
+            self.assertIsNotNone(agentic_code_review.load_event_payload)
+            self.assertIsNotNone(agentic_code_review.COMMENT_MARKERS)
+            self.assertIn(repo_root, sys.path)
+            self.assertIn(src_root, sys.path)
+
     def test_main_loads_event_payload_and_forwards_it_to_coordinator(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=False, verdict="LGTM")

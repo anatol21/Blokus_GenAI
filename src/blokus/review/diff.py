@@ -73,6 +73,8 @@ class _LineSpanTracker:
 
         if self.span_start is not None:
             self._flush_current_hunk()
+        elif self.deletion_anchor is not None:
+            self._flush_current_hunk()
         else:
             self.deletion_anchor = None
         self.current_line += 1
@@ -115,11 +117,11 @@ class _PatchAccumulator:
 
     def add_line(self, line: str) -> None:
         self._track_paths(line)
+        self.tracker.feed(line)
         if not self.analysis_truncated:
             if self._would_exceed_analysis_limit(line):
                 self.analysis_truncated = True
             else:
-                self.tracker.feed(line)
                 self._track_performance(line)
                 self.analyzed_lines += 1
                 self.analyzed_chars += len(line) + 1

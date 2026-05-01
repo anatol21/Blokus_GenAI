@@ -15,6 +15,8 @@ from blokus.review.types import ChangedFile, Finding, ReviewContext, SpecialistR
 
 MAX_PROMPT_FILES = 80
 MAX_PROMPT_COMMITS = 25
+MAX_SPECIALIST_FINDINGS = 3
+MAX_SPECIALIST_FINDINGS_TO_INSPECT = 100
 
 
 @dataclass(frozen=True)
@@ -159,7 +161,9 @@ def _parse_specialist_response(
     findings: list[Finding] = []
     uncertain_risks: list[UncertainRisk] = []
     unmatched_paths: set[str] = set()
-    for item in _dict_list(data.get("findings")):
+    raw_findings = _dict_list(data.get("findings"))
+    findings_were_truncated = len(raw_findings) > MAX_SPECIALIST_FINDINGS_TO_INSPECT
+    for item in raw_findings[:MAX_SPECIALIST_FINDINGS_TO_INSPECT]:
         if not required_keys.issubset(item):
             continue
         raw_path = str(item["file"])
@@ -195,6 +199,8 @@ def _parse_specialist_response(
                 source=specialist,
             )
         )
+        if len(findings) >= MAX_SPECIALIST_FINDINGS:
+            break
 
     for unmatched_path in sorted(unmatched_paths):
         uncertain_risks.append(
@@ -202,6 +208,18 @@ def _parse_specialist_response(
                 risk="Specialist findings were discarded because their file path did not match the current diff.",
                 reason_uncertain=f"The specialist referenced `{unmatched_path}`, which could not be reconciled to a changed file path or rename target.",
                 suggested_verification="Inspect the specialist output and normalize the referenced path if the finding should apply to a changed file.",
+            )
+        )
+
+    if findings_were_truncated:
+        uncertain_risks.append(
+            UncertainRisk(
+                risk="Specialist findings were truncated for scale.",
+                reason_uncertain=(
+                    f"The specialist returned more than {MAX_SPECIALIST_FINDINGS_TO_INSPECT} raw findings, so only the "
+                    f"first {MAX_SPECIALIST_FINDINGS_TO_INSPECT} were inspected."
+                ),
+                suggested_verification="Inspect the raw specialist output or rerun with a narrower diff if the omitted findings may matter.",
             )
         )
 
@@ -217,7 +235,7 @@ def _parse_specialist_response(
         )
 
     return SpecialistResponse(
-        findings=tuple(findings[:3]),
+        findings=tuple(findings[:MAX_SPECIALIST_FINDINGS]),
         uncertain_risks=tuple(uncertain_risks),
         note=str(data.get("note", "")),
     )

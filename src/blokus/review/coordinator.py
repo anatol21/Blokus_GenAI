@@ -175,19 +175,7 @@ class ReviewCoordinator:
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk], bool]:
         rendered_blocks = _RenderedBlockCache()
-        all_changed_diff = (
-            _RenderedDiffBundle(
-                text=_truncate_text(context.raw_diff, MAX_RENDERED_DIFF_CHARS, _RENDERED_BUNDLE_TRUNCATION_MARKER),
-                truncated=len(context.raw_diff) > MAX_RENDERED_DIFF_CHARS,
-            )
-            if context.raw_diff
-            else _render_diff_bundle(context.changed_files, rendered_blocks)
-        )
-        executable_diff = (
-            all_changed_diff
-            if context.changed_files == context.executable_files
-            else _render_diff_bundle(context.executable_files, rendered_blocks)
-        )
+        all_changed_diff, executable_diff = _render_specialist_diff_bundles(context, rendered_blocks)
         specialist_specs: list[tuple[str, tuple[ChangedFile, ...], str]] = [
             ("correctness", context.executable_files, executable_diff.text),
             ("tests", context.changed_files, all_changed_diff.text),
@@ -348,6 +336,92 @@ def _render_diff_bundle(
     rendered = "".join(blocks)
     if truncated:
         available = MAX_RENDERED_DIFF_CHARS - len(rendered)
+        marker = _truncate_text(_RENDERED_BUNDLE_TRUNCATION_MARKER, available, _RENDERED_BUNDLE_TRUNCATION_MARKER)
+        rendered = f"{rendered}{marker}"
+    return _RenderedDiffBundle(text=rendered, truncated=truncated)
+
+
+def _render_specialist_diff_bundles(
+    context: ReviewContext,
+    rendered_blocks: _RenderedBlockCache,
+) -> tuple[_RenderedDiffBundle, _RenderedDiffBundle]:
+    if context.raw_diff:
+        all_changed_diff = _RenderedDiffBundle(
+            text=_truncate_text(context.raw_diff, MAX_RENDERED_DIFF_CHARS, _RENDERED_BUNDLE_TRUNCATION_MARKER),
+            truncated=len(context.raw_diff) > MAX_RENDERED_DIFF_CHARS,
+        )
+        executable_diff = (
+            all_changed_diff
+            if context.changed_files == context.executable_files
+            else _render_diff_bundle(context.executable_files, rendered_blocks)
+        )
+        return all_changed_diff, executable_diff
+
+    if context.changed_files == context.executable_files:
+        bundle = _render_diff_bundle(context.changed_files, rendered_blocks)
+        return bundle, bundle
+
+    executable_paths = {changed_file.path for changed_file in context.executable_files}
+    all_parts: list[str] = []
+    executable_parts: list[str] = []
+    all_length = 0
+    executable_length = 0
+    all_truncated = False
+    executable_truncated = False
+    all_full = False
+    executable_full = False
+
+    for changed_file in context.changed_files:
+        block, block_truncated = rendered_blocks.get(changed_file)
+        if not block:
+            continue
+
+        if not all_full:
+            all_length, all_truncated, all_full = _append_rendered_bundle_block(
+                all_parts,
+                all_length,
+                all_truncated,
+                block,
+                block_truncated,
+            )
+
+        if not executable_full and changed_file.path in executable_paths:
+            executable_length, executable_truncated, executable_full = _append_rendered_bundle_block(
+                executable_parts,
+                executable_length,
+                executable_truncated,
+                block,
+                block_truncated,
+            )
+
+        if all_full and executable_full:
+            break
+
+    return (
+        _finalize_rendered_bundle(all_parts, all_length, all_truncated),
+        _finalize_rendered_bundle(executable_parts, executable_length, executable_truncated),
+    )
+
+
+def _append_rendered_bundle_block(
+    parts: list[str],
+    total_length: int,
+    truncated: bool,
+    block: str,
+    block_truncated: bool,
+) -> tuple[int, bool, bool]:
+    separator = "\n\n" if parts else ""
+    candidate = f"{separator}{block}"
+    if total_length + len(candidate) > MAX_RENDERED_DIFF_CHARS:
+        return total_length, True, True
+    parts.append(candidate)
+    return total_length + len(candidate), truncated or block_truncated, False
+
+
+def _finalize_rendered_bundle(parts: list[str], total_length: int, truncated: bool) -> _RenderedDiffBundle:
+    rendered = "".join(parts)
+    if truncated:
+        available = MAX_RENDERED_DIFF_CHARS - total_length
         marker = _truncate_text(_RENDERED_BUNDLE_TRUNCATION_MARKER, available, _RENDERED_BUNDLE_TRUNCATION_MARKER)
         rendered = f"{rendered}{marker}"
     return _RenderedDiffBundle(text=rendered, truncated=truncated)
