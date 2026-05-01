@@ -13,8 +13,8 @@ Your job:
 
 Verdict semantics:
 
-- `LGTM`: no material findings and no unresolved uncertainty needing follow-up.
-- `DISCUSS`: human follow-up is required before trusting the result, and this repository treats any non-`LGTM` verdict as a failing review-script outcome.
+- `LGTM`: no material findings remain. Informational uncertainty can still be reported without blocking `LGTM` when it does not materially reduce trust in the result, such as dependency metadata changes, bounded diff truncation, or provider billing outages after the static-analysis pass.
+- `DISCUSS`: unresolved uncertainty materially reduces trust in the result and needs human follow-up before relying on the review. Examples include missing git refs, fork-only runs that skip LLM review, unavailable review prompts, or malformed static-analysis/provider output.
 - `NEEDS CHANGES`: blocking findings are present and the automation should fail closed.
 
 The diff is authoritative. Branch names and commit messages are weak context only.

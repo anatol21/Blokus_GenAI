@@ -736,6 +736,32 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertTrue(run.result.uncertain_risks)
         self.assertIn("OpenRouter review was unavailable", run.result.uncertain_risks[0].risk)
 
+    def test_coordinator_keeps_lgtm_for_specialist_provider_billing_outages(self) -> None:
+        config = _make_config(REPO_ROOT)
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=("compileall",), posture="clean")
+        coordinator = ReviewCoordinator(config)
+
+        class FakeProvider:
+            def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+                del model, system_prompt, user_prompt
+                raise ProviderUnavailable("OpenRouter request failed: HTTP Error 402: Payment Required")
+
+        with mock.patch("blokus.review.coordinator.build_review_context", return_value=context), mock.patch.object(
+            coordinator.static_analyzer,
+            "analyze",
+            return_value=static_report,
+        ), mock.patch(
+            "blokus.review.coordinator.OpenRouterClient.from_env",
+            return_value=cast(OpenRouterClient, FakeProvider()),
+        ):
+            run = coordinator.run()
+
+        self.assertEqual(run.result.verdict, "LGTM")
+        self.assertTrue(
+            any(risk.risk == "Correctness specialist could not complete this run." for risk in run.result.uncertain_risks)
+        )
+
     def test_coordinator_skips_provider_for_forked_pull_requests(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12), same_repo=False)
@@ -2085,10 +2111,25 @@ class AgenticReviewTests(unittest.TestCase):
         ):
             run = coordinator.run()
 
-        self.assertEqual(run.result.verdict, "DISCUSS")
+        self.assertEqual(run.result.verdict, "LGTM")
         self.assertTrue(
             any(risk.risk == "Diff context was truncated for scale." for risk in run.result.uncertain_risks)
         )
+
+    def test_verdict_ignores_dependency_metadata_uncertainty(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        verdict = coordinator._build_verdict(
+            [],
+            [
+                UncertainRisk(
+                    risk="Dependency-related files changed in this PR.",
+                    reason_uncertain="The diff includes dependency metadata, but static analysis cannot confirm the runtime or supply-chain intent from changed code alone.",
+                    suggested_verification="Review dependency intent.",
+                )
+            ],
+        )
+
+        self.assertEqual(verdict, "LGTM")
 
     def test_openrouter_client_retries_retryable_failures(self) -> None:
         client = OpenRouterClient(

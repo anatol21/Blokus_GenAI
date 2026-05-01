@@ -179,8 +179,8 @@ The final review must include:
 
 ### Verdict Semantics
 
-- `LGTM`: no material findings remain and no unresolved uncertainty needs escalation.
-- `DISCUSS`: human follow-up is required before trusting the result; this repository treats any non-`LGTM` verdict as a failing review script outcome.
+- `LGTM`: no material findings remain. Informational uncertainty may still be reported when it does not materially reduce trust in the result, such as dependency metadata changes, bounded diff truncation, or provider billing outages after the static-analysis pass.
+- `DISCUSS`: unresolved uncertainty materially reduces trust in the result and needs human follow-up before trusting the output, such as missing git refs, fork-only runs that skip LLM review, unavailable prompt assets, or malformed tool/provider output.
 - `NEEDS CHANGES`: at least one blocking finding is present and automation should fail closed.
 
 Each finding must include:

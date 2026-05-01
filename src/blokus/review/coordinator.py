@@ -293,7 +293,7 @@ class ReviewCoordinator:
     def _build_verdict(self, findings: list[Finding], uncertain_risks: list[UncertainRisk]) -> str:
         if any(finding.blocking_recommendation for finding in findings):
             return "NEEDS CHANGES"
-        if uncertain_risks:
+        if any(_requires_discussion(risk) for risk in uncertain_risks):
             return "DISCUSS"
         return "LGTM"
 
@@ -409,6 +409,21 @@ def _append_prompt_context_truncation_risk(uncertain_risks: list[UncertainRisk])
     if any(existing.risk == risk.risk for existing in uncertain_risks):
         return
     uncertain_risks.append(risk)
+
+
+_NON_BLOCKING_UNCERTAIN_RISKS = {
+    "Dependency-related files changed in this PR.",
+    "Diff context was truncated for scale.",
+    "Commit or file-list context was truncated for scale.",
+}
+
+
+def _requires_discussion(risk: UncertainRisk) -> bool:
+    if risk.risk in _NON_BLOCKING_UNCERTAIN_RISKS:
+        return False
+    if risk.risk.endswith("specialist could not complete this run.") and "OpenRouter" in risk.reason_uncertain:
+        return False
+    return True
 
 
 def _fallback_review_context(
