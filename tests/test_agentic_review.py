@@ -70,6 +70,7 @@ def _changed_file(
     patch: str = "",
     performance_sensitive: bool = False,
     patch_truncated: bool = False,
+    analysis_truncated: bool = False,
     old_path: str | None = None,
 ) -> ChangedFile:
     categories = []
@@ -93,6 +94,7 @@ def _changed_file(
         old_path=old_path,
         performance_sensitive=performance_sensitive,
         patch_truncated=patch_truncated,
+        analysis_truncated=analysis_truncated,
     )
 
 
@@ -318,6 +320,35 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertIsNotNone(block)
         self.assertTrue(cast(review_diff._PatchBlock, block).performance_sensitive)
+
+    def test_patch_accumulator_hard_caps_large_diff_analysis(self) -> None:
+        config = _make_config(REPO_ROOT)
+
+        with mock.patch.object(review_diff, "MAX_ANALYZED_PATCH_LINES", 9), mock.patch.object(
+            review_diff,
+            "MAX_ANALYZED_PATCH_CHARS",
+            10_000,
+        ):
+            accumulator = review_diff._PatchAccumulator(config)
+            for line in (
+                "diff --git a/src/demo.py b/src/demo.py",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -0,0 +1,6 @@",
+                "+line 1",
+                "+line 2",
+                "+line 3",
+                "+line 4",
+                "+line 5",
+                "+cache lookup result",
+            ):
+                accumulator.add_line(line)
+
+        block = cast(review_diff._PatchBlock, accumulator.build())
+
+        self.assertTrue(block.analysis_truncated)
+        self.assertFalse(block.performance_sensitive)
+        self.assertEqual(block.line_spans, (LineSpan(1, 5),))
 
     def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
         patch_text = "\n".join(
@@ -2133,6 +2164,58 @@ class AgenticReviewTests(unittest.TestCase):
             any(risk.risk == "ShellCheck output could not be parsed as JSON." for risk in report.uncertain_risks)
         )
 
+    def test_static_analyzer_caps_findings_per_tool_without_masking_later_tools(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(_changed_file("sandbox/demo.py", line_start=1, line_end=250))
+        ruff_payload = [
+            {
+                "filename": "sandbox/demo.py",
+                "location": {"row": line_number},
+                "end_location": {"row": line_number},
+                "code": "F401",
+                "message": f"unused import {line_number}",
+            }
+            for line_number in range(1, 102)
+        ]
+
+        def fake_run(args: list[str]) -> ToolRun:
+            if args[0] == sys.executable:
+                return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+            if args[0] == "/ruff":
+                return ToolRun(command=" ".join(args), returncode=1, stdout=json.dumps(ruff_payload), stderr="")
+            if args[0] == "/mypy":
+                return ToolRun(
+                    command=" ".join(args),
+                    returncode=1,
+                    stdout="sandbox/demo.py:150: error: later blocking issue\n",
+                    stderr="",
+                )
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        self.assertEqual(
+            sum(1 for finding in report.findings if finding.title.startswith("Ruff")),
+            100,
+        )
+        self.assertTrue(
+            any(
+                finding.title == "Mypy type error" and finding.file == "sandbox/demo.py" and finding.line_start == 150
+                for finding in report.findings
+            )
+        )
+        self.assertTrue(any(risk.risk == "Ruff findings were capped." for risk in report.uncertain_risks))
+
     def test_coordinator_keeps_review_context_when_ruff_json_is_invalid(self) -> None:
         config = _make_config(REPO_ROOT)
         coordinator = ReviewCoordinator(config)
@@ -2208,6 +2291,39 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(run.result.verdict, "LGTM")
         self.assertTrue(
             any(risk.risk == "Diff context was truncated for scale." for risk in run.result.uncertain_risks)
+        )
+
+    def test_coordinator_adds_uncertain_risk_when_diff_analysis_is_truncated(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file(
+                "src/blokus/engine.py",
+                line_start=1,
+                line_end=20,
+                analysis_truncated=True,
+            ),
+            raw_diff="",
+        )
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=("compileall",), posture="clean")
+
+        class FakeProvider:
+            def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+                return json.dumps({"findings": [], "uncertain_risks": [], "note": ""})
+
+        with mock.patch("blokus.review.coordinator.build_review_context", return_value=context), mock.patch.object(
+            coordinator.static_analyzer,
+            "analyze",
+            return_value=static_report,
+        ), mock.patch(
+            "blokus.review.coordinator.OpenRouterClient.from_env",
+            return_value=FakeProvider(),
+        ):
+            run = coordinator.run()
+
+        self.assertEqual(run.result.verdict, "LGTM")
+        self.assertTrue(
+            any(risk.risk == "Diff analysis was truncated for scale." for risk in run.result.uncertain_risks)
         )
 
     def test_verdict_ignores_dependency_metadata_uncertainty(self) -> None:
@@ -2645,6 +2761,43 @@ default = "default-model"
             (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "excluded_globs.*must be a list"):
+                load_review_config(repo_root=repo_root)
+
+    def test_config_rejects_non_string_list_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".github").mkdir()
+            config_text = """
+max_findings = 5
+excluded_globs = [123]
+blocking_severities = ["critical", "high"]
+prompt_dir = ".github/prompts"
+spec_path = "docs/spec.md"
+schema_path = "schemas/schema.json"
+
+[provider]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+timeout_seconds = 30
+max_retries = 2
+
+[performance]
+path_markers = ["src/engine.py"]
+diff_markers = ["for ", "while "]
+
+[heuristics]
+schema_test_paths = ["tests/test_serialization.py"]
+fixture_test_paths = ["tests/test_serialization.py"]
+cli_test_paths = ["tests/test_cli.py"]
+serialization_paths = ["src/models.py"]
+dependency_files = ["pyproject.toml"]
+
+[models]
+default = "default-model"
+"""
+            (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "excluded_globs.*index 0.*string"):
                 load_review_config(repo_root=repo_root)
 
 

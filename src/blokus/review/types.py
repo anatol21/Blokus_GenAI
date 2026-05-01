@@ -45,6 +45,7 @@ class ChangedFile:
     old_path: str | None = None
     performance_sensitive: bool = False
     patch_truncated: bool = False
+    analysis_truncated: bool = False
 
     def touches_line(self, line_number: int) -> bool:
         return any(span.contains(line_number) for span in self.line_spans)

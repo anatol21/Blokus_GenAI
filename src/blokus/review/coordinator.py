@@ -109,6 +109,7 @@ class ReviewCoordinator:
         provider: OpenRouterClient | None = None
         provider_error: str | None = None
         diff_context_truncated = any(changed_file.patch_truncated for changed_file in context.changed_files)
+        diff_analysis_truncated = any(changed_file.analysis_truncated for changed_file in context.changed_files)
         if context.same_repo and context.changed_files:
             try:
                 provider = OpenRouterClient.from_env(self.config)
@@ -144,6 +145,8 @@ class ReviewCoordinator:
 
         if diff_context_truncated:
             _append_diff_truncation_risk(uncertain_risks)
+        if diff_analysis_truncated:
+            _append_diff_analysis_truncation_risk(uncertain_risks)
 
         findings = self._dedupe_and_limit(findings)
         summary = self._build_summary(context, findings, static_report, performance_requested, provider_available)
@@ -403,6 +406,23 @@ def _append_diff_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
     uncertain_risks.append(risk)
 
 
+def _append_diff_analysis_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
+    risk = UncertainRisk(
+        risk="Diff analysis was truncated for scale.",
+        reason_uncertain=(
+            "One or more changed files exceeded the per-file diff-analysis limits, so changed-line tracking "
+            "and performance-marker scanning stopped before the end of those patches."
+        ),
+        suggested_verification=(
+            "Inspect very large diffs manually or rerun the review on a narrower change set if tail-end "
+            "diagnostics may matter."
+        ),
+    )
+    if any(existing.risk == risk.risk for existing in uncertain_risks):
+        return
+    uncertain_risks.append(risk)
+
+
 def _append_prompt_context_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
     risk = UncertainRisk(
         risk="Commit or file-list context was truncated for scale.",
@@ -417,6 +437,7 @@ def _append_prompt_context_truncation_risk(uncertain_risks: list[UncertainRisk])
 _NON_BLOCKING_UNCERTAIN_RISKS = {
     "Dependency-related files changed in this PR.",
     "Diff context was truncated for scale.",
+    "Diff analysis was truncated for scale.",
     "Commit or file-list context was truncated for scale.",
 }
 

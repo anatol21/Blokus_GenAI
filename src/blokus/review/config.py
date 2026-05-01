@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -158,14 +159,21 @@ def _normalized_env_value(name: str) -> str:
 
 def _coerce_str_list(value: object, field_name: str, config_path: Path) -> tuple[str, ...]:
     """Coerce a value to a tuple of strings.
-    
+
     Handles lists of strings (normal case) and single strings (coerced to single-item list).
     Raises ValueError for invalid types.
     """
     if isinstance(value, list):
-        return tuple(str(item) for item in value)
+        coerced: list[str] = []
+        for index, item in enumerate(value):
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"Config field `{field_name}` item at index {index} must be a string, "
+                    f"got {type(item).__name__}."
+                )
+            coerced.append(item)
+        return tuple(coerced)
     if isinstance(value, str):
-        import warnings
         warnings.warn(
             f"Config field `{field_name}` should be a list, not a string. "
             f"Coercing '{value}' to ['{value}'].",

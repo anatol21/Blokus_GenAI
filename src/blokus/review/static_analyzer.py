@@ -71,6 +71,8 @@ class StaticAnalyzer:
         findings: list[Finding] = []
         uncertain_risks: list[UncertainRisk] = []
         commands: list[str] = []
+        tool_finding_counts: dict[str, int] = {}
+        capped_finding_tools: set[str] = set()
         unavailable_tools = False
         skip_expensive_python_tools = len(python_files) > _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES
 
@@ -94,7 +96,14 @@ class StaticAnalyzer:
             ):
                 compileall_run = self._run_command(compileall_args)
                 commands.append(compileall_run.command)
-                findings.extend(self._parse_compileall(context, compileall_run))
+                self._extend_bounded_findings(
+                    findings,
+                    uncertain_risks,
+                    tool_name="Compileall",
+                    tool_findings=self._parse_compileall(context, compileall_run),
+                    tool_finding_counts=tool_finding_counts,
+                    capped_tools=capped_finding_tools,
+                )
 
         if python_files:
             if skip_expensive_python_tools:
@@ -129,7 +138,14 @@ class StaticAnalyzer:
                         ruff_run = self._run_command(ruff_args)
                         commands.append(ruff_run.command)
                         parsed = self._parse_ruff(context, ruff_run)
-                        findings.extend(parsed.findings)
+                        self._extend_bounded_findings(
+                            findings,
+                            uncertain_risks,
+                            tool_name="Ruff",
+                            tool_findings=parsed.findings,
+                            tool_finding_counts=tool_finding_counts,
+                            capped_tools=capped_finding_tools,
+                        )
                         uncertain_risks.extend(parsed.uncertain_risks)
                         unavailable_tools = unavailable_tools or parsed.unavailable
 
@@ -151,7 +167,14 @@ class StaticAnalyzer:
                                 mypy_args
                             )
                             commands.append(mypy_run.command)
-                            findings.extend(self._parse_mypy(context, mypy_run))
+                            self._extend_bounded_findings(
+                                findings,
+                                uncertain_risks,
+                                tool_name="Mypy",
+                                tool_findings=self._parse_mypy(context, mypy_run),
+                                tool_finding_counts=tool_finding_counts,
+                                capped_tools=capped_finding_tools,
+                            )
                     finally:
                         for cleanup_path in cleanup_paths:
                             cleanup_path.unlink(missing_ok=True)
@@ -164,7 +187,14 @@ class StaticAnalyzer:
             ):
                 bash_run = self._run_command(bash_args)
                 commands.append(bash_run.command)
-                findings.extend(self._parse_bash(shell_files, bash_run))
+                self._extend_bounded_findings(
+                    findings,
+                    uncertain_risks,
+                    tool_name="bash -n",
+                    tool_findings=self._parse_bash(shell_files, bash_run),
+                    tool_finding_counts=tool_finding_counts,
+                    capped_tools=capped_finding_tools,
+                )
 
             shellcheck_path = self._discover_tool("shellcheck")
             if shellcheck_path is None:
@@ -185,27 +215,26 @@ class StaticAnalyzer:
                     shellcheck_run = self._run_command(shellcheck_args)
                     commands.append(shellcheck_run.command)
                     parsed = self._parse_shellcheck(shell_files, shellcheck_run)
-                    findings.extend(parsed.findings)
+                    self._extend_bounded_findings(
+                        findings,
+                        uncertain_risks,
+                        tool_name="ShellCheck",
+                        tool_findings=parsed.findings,
+                        tool_finding_counts=tool_finding_counts,
+                        capped_tools=capped_finding_tools,
+                    )
                     uncertain_risks.extend(parsed.uncertain_risks)
                     unavailable_tools = unavailable_tools or parsed.unavailable
 
-        findings.extend(self._heuristic_findings(context))
+        self._extend_bounded_findings(
+            findings,
+            uncertain_risks,
+            tool_name="Heuristic static analysis",
+            tool_findings=self._heuristic_findings(context),
+            tool_finding_counts=tool_finding_counts,
+            capped_tools=capped_finding_tools,
+        )
         uncertain_risks.extend(self._heuristic_uncertain_risks(context))
-
-        # Cap findings to prevent OOM with excessive diagnostics
-        if len(findings) > _MAX_STATIC_FINDINGS_PER_TOOL:
-            total_findings = len(findings)
-            findings = findings[:_MAX_STATIC_FINDINGS_PER_TOOL]
-            uncertain_risks.append(
-                UncertainRisk(
-                    risk="Static analysis findings were capped.",
-                    reason_uncertain=(
-                        f"Total of {total_findings} findings exceeded the maximum of "
-                        f"{_MAX_STATIC_FINDINGS_PER_TOOL}. Only the first {_MAX_STATIC_FINDINGS_PER_TOOL} were retained."
-                    ),
-                    suggested_verification="Run static analysis tools manually to see all findings.",
-                )
-            )
 
         posture = "not_run"
         if findings:
@@ -220,6 +249,57 @@ class StaticAnalyzer:
             uncertain_risks=tuple(uncertain_risks),
             commands=tuple(commands),
             posture=posture,
+        )
+
+    def _extend_bounded_findings(
+        self,
+        findings: list[Finding],
+        uncertain_risks: list[UncertainRisk],
+        *,
+        tool_name: str,
+        tool_findings: list[Finding] | tuple[Finding, ...],
+        tool_finding_counts: dict[str, int],
+        capped_tools: set[str],
+    ) -> None:
+        if not tool_findings:
+            return
+
+        current_count = tool_finding_counts.get(tool_name, 0)
+        remaining = max(0, _MAX_STATIC_FINDINGS_PER_TOOL - current_count)
+        if remaining <= 0:
+            self._append_findings_cap_risk(tool_name, uncertain_risks, capped_tools)
+            return
+
+        ordered_findings = sorted(tool_findings, key=lambda finding: finding.rank(), reverse=True)
+        accepted_findings = ordered_findings[:remaining]
+        findings.extend(accepted_findings)
+        tool_finding_counts[tool_name] = current_count + len(accepted_findings)
+
+        if len(ordered_findings) > remaining:
+            self._append_findings_cap_risk(tool_name, uncertain_risks, capped_tools)
+
+    def _append_findings_cap_risk(
+        self,
+        tool_name: str,
+        uncertain_risks: list[UncertainRisk],
+        capped_tools: set[str],
+    ) -> None:
+        if tool_name in capped_tools:
+            return
+
+        capped_tools.add(tool_name)
+        uncertain_risks.append(
+            UncertainRisk(
+                risk=f"{tool_name} findings were capped.",
+                reason_uncertain=(
+                    f"{tool_name} produced more than {_MAX_STATIC_FINDINGS_PER_TOOL} findings across this review run. "
+                    f"Only up to {_MAX_STATIC_FINDINGS_PER_TOOL} findings from that tool were retained."
+                ),
+                suggested_verification=(
+                    f"Rerun the relevant `{tool_name}` check manually or narrow the changed-file set to inspect the full "
+                    "diagnostic output."
+                ),
+            )
         )
 
     def _parse_ruff(self, context: ReviewContext, tool_run: ToolRun) -> _ToolParseResult:

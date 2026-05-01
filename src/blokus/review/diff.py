@@ -18,6 +18,8 @@ from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayl
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performance|refactor)\b", re.IGNORECASE)
 MAX_STORED_PATCH_CHARS = 16_000
+MAX_ANALYZED_PATCH_LINES = 50_000
+MAX_ANALYZED_PATCH_CHARS = 2_000_000
 MAX_REVIEW_CONTEXT_COMMITS = 25
 _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 
@@ -31,6 +33,7 @@ class _PatchBlock:
     old_path: str | None
     performance_sensitive: bool
     patch_truncated: bool
+    analysis_truncated: bool = False
 
 
 @dataclass
@@ -100,6 +103,9 @@ class _PatchAccumulator:
     stored_chars: int = 0
     patch_truncated: bool = False
     performance_sensitive: bool = False
+    analyzed_lines: int = 0
+    analyzed_chars: int = 0
+    analysis_truncated: bool = False
     _path_markers_checked: bool = field(default=False, repr=False)
     _diff_marker_pattern: re.Pattern[str] | None = field(default=None, repr=False)
 
@@ -108,13 +114,16 @@ class _PatchAccumulator:
         self._diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
 
     def add_line(self, line: str) -> None:
-        # Always track spans and performance markers, even after patch storage truncation
-        self.tracker.feed(line)
         self._track_paths(line)
-        self._track_performance(line)
-        # Only skip bounded storage append once truncated
-        if not self.patch_truncated:
-            self._append_bounded(line)
+        if not self.analysis_truncated:
+            if self._would_exceed_analysis_limit(line):
+                self.analysis_truncated = True
+            else:
+                self.tracker.feed(line)
+                self._track_performance(line)
+                self.analyzed_lines += 1
+                self.analyzed_chars += len(line) + 1
+        self._append_bounded(line)
 
     def build(self) -> _PatchBlock | None:
         path = self.new_path if self.new_path and self.new_path != "/dev/null" else self.old_path
@@ -133,6 +142,7 @@ class _PatchAccumulator:
             old_path=self.old_path if self.old_path != path else None,
             performance_sensitive=self.performance_sensitive,
             patch_truncated=self.patch_truncated,
+            analysis_truncated=self.analysis_truncated,
         )
 
     def _track_paths(self, line: str) -> None:
@@ -196,6 +206,12 @@ class _PatchAccumulator:
         self.stored_parts.append(piece[:remaining])
         self.stored_chars += remaining
         self.patch_truncated = True
+
+    def _would_exceed_analysis_limit(self, line: str) -> bool:
+        return (
+            self.analyzed_lines >= MAX_ANALYZED_PATCH_LINES
+            or self.analyzed_chars + len(line) + 1 > MAX_ANALYZED_PATCH_CHARS
+        )
 
 
 def build_review_context(
@@ -288,6 +304,7 @@ def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> t
                 old_path=patch_block.old_path,
                 performance_sensitive=patch_block.performance_sensitive,
                 patch_truncated=patch_block.patch_truncated,
+                analysis_truncated=patch_block.analysis_truncated,
             )
         )
 
