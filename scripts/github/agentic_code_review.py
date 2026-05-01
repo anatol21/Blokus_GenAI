@@ -8,13 +8,22 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Type
+
+    from blokus.review.config import load_review_config as _load_review_config
+    from blokus.review.coordinator import ReviewCoordinator as _ReviewCoordinator
+    from scripts.github.gh_helpers import GitHubClient as _GitHubClient, load_event_payload as _load_event_payload
 
 # Module-level placeholders for lazy imports (required for test patching)
-load_review_config = None
-ReviewCoordinator = None
-GitHubClient = None
-load_event_payload = None
-COMMENT_MARKERS = None
+load_review_config: "Callable[..., Any] | None" = None
+ReviewCoordinator: "Type[Any] | None" = None
+GitHubClient: "Type[Any] | None" = None
+load_event_payload: "Callable[..., Any] | None" = None
+COMMENT_MARKERS: "dict[str, str] | None" = None
 
 
 def main() -> int:
