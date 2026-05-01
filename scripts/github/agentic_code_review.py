@@ -50,9 +50,9 @@ def main() -> int:
 
     run = coordinator.run(
         event_payload=event_payload,
-        base_ref=args.base_ref or os.environ.get("REVIEW_BASE_REF"),
-        head_ref=args.head_ref or os.environ.get("REVIEW_HEAD_REF"),
-        pr_number=args.pr_number or _env_int("REVIEW_PULL_NUMBER"),
+        base_ref=args.base_ref if args.base_ref is not None else os.environ.get("REVIEW_BASE_REF"),
+        head_ref=args.head_ref if args.head_ref is not None else os.environ.get("REVIEW_HEAD_REF"),
+        pr_number=args.pr_number if args.pr_number is not None else _env_int("REVIEW_PULL_NUMBER"),
     )
 
     json_path = _resolve_output_path(repo_root, args.json_out)

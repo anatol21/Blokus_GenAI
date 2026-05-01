@@ -350,6 +350,35 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertFalse(block.performance_sensitive)
         self.assertEqual(block.line_spans, (LineSpan(1, 6),))
 
+    def test_patch_accumulator_skips_tail_lines_after_both_truncation_limits_trip(self) -> None:
+        config = _make_config(REPO_ROOT)
+
+        with mock.patch.object(review_diff, "MAX_ANALYZED_PATCH_LINES", 4), mock.patch.object(
+            review_diff,
+            "MAX_ANALYZED_PATCH_CHARS",
+            10_000,
+        ), mock.patch.object(review_diff, "MAX_STORED_PATCH_CHARS", 90):
+            accumulator = review_diff._PatchAccumulator(config)
+            wrapped_feed = mock.Mock(wraps=accumulator.tracker.feed)
+            accumulator.tracker.feed = wrapped_feed
+            for line in (
+                "diff --git a/src/demo.py b/src/demo.py",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -0,0 +1,4 @@",
+                "+line 1",
+                "+line 2",
+                "+line 3",
+                "+cache lookup result",
+            ):
+                accumulator.add_line(line)
+
+        block = cast(review_diff._PatchBlock, accumulator.build())
+
+        self.assertTrue(block.patch_truncated)
+        self.assertTrue(block.analysis_truncated)
+        self.assertEqual(wrapped_feed.call_count, 5)
+
     def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
         patch_text = "\n".join(
             [
@@ -589,6 +618,34 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertTrue(
             any(risk.risk == "Specialist findings were truncated for scale." for risk in response.uncertain_risks)
         )
+
+    def test_specialist_response_drops_findings_with_inverted_line_ranges(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=25),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Inverted range",
+                            "severity": "moderate",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 30,
+                            "line_end": 20,
+                            "evidence": "Range is inverted.",
+                            "impact": "Should be ignored.",
+                            "suggested_action": "Drop malformed finding.",
+                            "blocking_recommendation": False,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(response.findings, ())
 
     def test_specialist_response_parses_uncertain_risks_and_note(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
@@ -2508,6 +2565,67 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(result, "LGTM")
         self.assertEqual(urlopen_mock.call_count, 2)
         sleep_mock.assert_called_once_with(1)
+
+    def test_openrouter_client_rejects_oversized_response_body(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=0,
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"x" * 12
+
+        with mock.patch("blokus.review.provider._MAX_OPENROUTER_RESPONSE_BYTES", 10), mock.patch(
+            "blokus.review.provider.urlopen",
+            return_value=response,
+        ):
+            with self.assertRaisesRegex(ProviderUnavailable, "safe size limit"):
+                client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+    def test_openrouter_client_normalizes_segmented_content(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=0,
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "  {\"findings\": []"},
+                                {"type": "text", "text": ", \"uncertain_risks\": [], \"note\": \"\"}  "},
+                            ]
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        with mock.patch("blokus.review.provider.urlopen", return_value=response):
+            result = client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
+        self.assertEqual(result, '{"findings": [], "uncertain_risks": [], "note": ""}')
+
+    def test_openrouter_client_rejects_unusable_structured_content(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=0,
+        )
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": [{"type": "image", "url": "https://example.com/image.png"}]}}]}
+        ).encode("utf-8")
+
+        with mock.patch("blokus.review.provider.urlopen", return_value=response):
+            with self.assertRaisesRegex(ProviderUnavailable, "unsupported type"):
+                client.complete(model="gpt", system_prompt="sys", user_prompt="user")
 
     def test_openrouter_client_rejects_negative_retry_budget(self) -> None:
         client = OpenRouterClient(

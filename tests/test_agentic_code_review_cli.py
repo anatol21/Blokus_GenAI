@@ -305,6 +305,52 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertEqual(payload["verdict"], "LGTM")
             self.assertIn("`LGTM`", (artifact_dir / "review.md").read_text(encoding="utf-8"))
 
+    def test_main_prefers_explicit_cli_pr_number_over_environment(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_EVENT_PATH": "",
+                "REVIEW_PULL_NUMBER": "44",
+                "REVIEW_BASE_REF": "env-base",
+                "REVIEW_HEAD_REF": "env-head",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--pr-number",
+                "0",
+                "--base-ref",
+                "",
+                "--head-ref",
+                "",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["pr_number"], 0)
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["base_ref"], "")
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["head_ref"], "")
+
     def test_main_resolves_relative_artifact_paths_from_workspace_root(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=False, verdict="LGTM")

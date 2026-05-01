@@ -6,11 +6,13 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from blokus.review.config import ReviewConfig
+
+
+_MAX_OPENROUTER_RESPONSE_BYTES = 1_000_000
 
 
 class ProviderUnavailable(RuntimeError):
@@ -63,7 +65,7 @@ class OpenRouterClient:
         for attempt in range(1, attempt_count + 1):
             try:
                 with urlopen(request, timeout=self.timeout_seconds) as response:
-                    raw_body = response.read()
+                    raw_body = _read_bounded_response(response)
                     body = json.loads(raw_body.decode("utf-8"))
                 break
             except HTTPError as exc:
@@ -98,7 +100,70 @@ class OpenRouterClient:
         content = message.get("content")
         if content is None:
             raise ProviderUnavailable("OpenRouter response did not contain a usable message.")
-        return str(cast(object, content)).strip()
+        return _normalize_message_content(content)
+
+
+def _read_bounded_response(response: object) -> bytes:
+    content_length = _content_length_header(response)
+    if content_length is not None and content_length > _MAX_OPENROUTER_RESPONSE_BYTES:
+        raise ProviderUnavailable(
+            f"OpenRouter response exceeded the safe size limit of {_MAX_OPENROUTER_RESPONSE_BYTES} bytes."
+        )
+
+    read = getattr(response, "read", None)
+    if not callable(read):
+        raise ProviderUnavailable("OpenRouter response body could not be read.")
+
+    raw_body = read(_MAX_OPENROUTER_RESPONSE_BYTES + 1)
+    if not isinstance(raw_body, (bytes, bytearray)):
+        raise ProviderUnavailable("OpenRouter response body was not valid binary data.")
+    if len(raw_body) > _MAX_OPENROUTER_RESPONSE_BYTES:
+        raise ProviderUnavailable(
+            f"OpenRouter response exceeded the safe size limit of {_MAX_OPENROUTER_RESPONSE_BYTES} bytes."
+        )
+    return bytes(raw_body)
+
+
+def _content_length_header(response: object) -> int | None:
+    headers = getattr(response, "headers", None)
+    if headers is None or not hasattr(headers, "get"):
+        return None
+
+    raw_value = headers.get("Content-Length")
+    if isinstance(raw_value, int):
+        return raw_value if raw_value >= 0 else None
+    if isinstance(raw_value, str):
+        try:
+            parsed = int(raw_value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed >= 0 else None
+    return None
+
+
+def _normalize_message_content(content: object) -> str:
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+
+        normalized = "".join(parts).strip()
+        if normalized:
+            return normalized
+
+    raise ProviderUnavailable(
+        f"OpenRouter response content had unsupported type `{type(content).__name__}`."
+    )
 
 
 def _is_retryable_http_error(error: HTTPError) -> bool:
