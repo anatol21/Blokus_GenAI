@@ -13,14 +13,8 @@
 **Authors:** Maximilian Alp Grüder, 
 
 ---
-use ICE Score as an example !!!!!
-two reviewing tasks. reviewing ai generated code, and reviewing in general 
-2.11 could be conflicting with some other guidelines
-2.15 using llms here instead of static code. llms can also do locally what static code do for a whole pull request. 
 
-to do: 
-which guidelines conflict? 
-which idea is repeated the most? 
+
 ## 1. Unified Guidelines
 
 > **Note:** These are the merged, refined guidelines that your team recommends to the class. Each guideline should be actionable, specific, and usable during real SE/coding tasks.
@@ -69,7 +63,7 @@ Avoid this if the goal is to capture every possible minor stylistic issue, or if
 
 
 ### Guideline 1: Implement Agentic AI for Orchestration of Dedicated Review Tasks
-
+-> triggers automatically
 **Description:**  
 Use a central orchestrator agent to delegate specific review tasks to specialized sub-agents (e.g., security, performance, style), and use static code analysis tools to provide deterministic inputs and ensure comprehensive coverage without overwhelming a single model.
 
@@ -89,7 +83,7 @@ Apply this guideline when reviewing large or complex codebases where multiple re
 **When to Avoid:**  
 Avoid this for very small or simple code changes where the overhead of managing multiple agents may outweigh the benefits. In such cases, a single, well-crafted prompt to a general-purpose LLM may suffice.
 
-### Guideline 2: Give an output format and constraints
+### Guideline 2: Give an output format and priorititize findings
 
 **Description**
 Define a strict hierarchy of findings (Critical, Supporting, Trivial) and cap the number of "Nit" (minor) comments to prevent "reviewer fatigue" and "hallucinated nitpicking". Similarly, define an output format that is human-oriented and informative. 
@@ -128,7 +122,7 @@ Avoid this if the goal is to capture every possible minor stylistic issue, or if
 
 
 ### Guideline 3: Ensure the code does not have any misleading or bias inducing comments
-
+-> check more bias clusters and focus on biases instead of only this kind of bias where seniority or correctness is implied
 **Description**
 Explicitly strip "authority cues" and standardize variable names or comments before the LLM sees the code.
 
@@ -154,7 +148,7 @@ For reviewing complex code or code that is not well documented, use structured p
 
 **Example:** 
 Prompt the LLM with:
-1. **Persona**: "Act as a senior system analyst and a security expert."
+1. **Persona**: "Act as a senior system analyst (or a security expert)."
 2. **Pseudocode Generation**: "First, read the provided code and convert its core logic into language-agnostic pseudocode."
 3. **Chain-of-Thought (CoT) Breakdown**: "Next, decompose the pseudocode into distinct steps (e.g., validation, execution, state update). Analyze each step individually for logical flaws and edge cases."
 4. **Multi-Perspective Final Review**: "Finally, provide your review summary from the perspective of a code reviewer (focusing on code readability) and a system architect (focusing on design robustness)."
@@ -165,18 +159,68 @@ Apply this guideline when using LLMs for high level and complex code reviews
 **When to Avoid**
 Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where detailed feedback might actually be valuable.
 
-
-
 ### Guideline 5 LLM as a judge and Human in the loop
 
+**Description**
+LLM agents are highly able, and can perform many tasks without human involvement. Accountability, and the shortcomings of the AI technology however, still requires human involvement. Human involvement could however be optimized by implementing checks and breakpoints during the automated review process. 
+The results of all suggestions of a reviewing agents must be evaluated by other agents with different personas according to these two criteria:
+1) Confidence of the Agent 
+2) Criticality of the Change, as defined by the developers in the review.md file.  
+
+Criticality stands for how likely is it that the change will affect a crucial process or a result in a dangerous state for the code snipplet or section being changed, whereas confidence score represents how sure the agent is that its review and suggestion fits the original context and does not introduce additional errors. 
+
+Agents could be allowed to implement high confidence reviews without human review, but if the criticality is high, or medium, the confidence should be capped so that a human review is still needed. 
+
+**Reasoning**
+LLM Agents are highl developed solutions that could be trusted with many tasks, among them automatic detection and implementation of small scale changes that are low risk, such as high-volume routine checks (e.g., style formatting). However, there is evidence that they struggle with complex, subjective evaluations. Therefore, LLM Agents should not be allowed to implement such evaluations and reviews without human supervision. 
+
+**Example:** 
+An automated review agent auto-approves a typo fix or the addition of an edge-case logic, but stops and triggers additional agents with different personas for reviews that are not low in criticality. A review agent with senior software developer persona triggers the senior architect agent to go over the criticality of a change. Both agents assign a criticality and a confidence value to the change, and this is then reported to a human evaluator. 
+
+**When to Apply**
+In complex code environments with complex logic utilizing automated code agents. 
+
+**When to Avoid**
+Small scale pushes and code changes where the criticality is inherently low. 
+
 ### Guideline 6 have a separate review.md
- 
----
 
-### Guideline N: `[Title]`
+**Description**
+Create a concise, short, and separate review.md file specifically tailored for review agents so that they focus on specific tasks, assume speific personas, or produce outputs that follow specific requirements. Use grading scales like ICE-Scoring to materialize what is expected of the agent. 
 
-(Repeat the same structure for each guideline.)
+**Reasoning:** This overrides generic agent behavior, injecting review-only instructions directly into the pipeline with the highest priority. Specificity and concise descriptions matter because length has a cost and a long instructional file dilutes the rules that matter most.
 
+**Example**
+REVIEW.md
+Persona: Act as a Senior Performance Engineer.
+
+Definitions: "Important" means any change affecting the DB_Connector or Auth modules.
+
+Exclusions: Ignore any formatting issues in /src/gen.
+
+Custom Check: Always verify that new API endpoints have an associated integration test.
+
+Criticality: Score the change out of then on following criteria:
+0.1–0.3 (Low): UI changes, documentation, or non-functional refactors in isolated modules.
+
+0.4–0.7 (Medium): Changes to business logic, API schema updates, or new library dependencies.
+
+0.8–1.0 (High): Modifications to Authentication, Database migrations, PII handling, or Core Financial logic.
+
+Confidence: Start with 1 and deduct points based on the following criteria: 
+Missing Context: Subtract 0.2 if the implementation depends on external functions not provided in the prompt.
+
+Complex Logic: Subtract 0.1 for every nested loop or recursive call where state is hard to track.
+
+Heuristic Mismatch: Subtract 0.3 if the code violates a "Should" rule in AGENT.md but technically compiles.
+
+LLM as a judge should then decide to implement the change or trigger a human check by evaluating the different scores by these different agents. 
+
+**When to Apply**
+When using specialized LLM Agents such as orchestrator and specialized sub-agents.
+
+**When to Avoid**
+During earlier stages of the project, when review is not delegated to LLM agents, and for simple repositories. 
 ---
 
 ## 2. Raw Guidelines (Source Documents)
@@ -453,6 +497,7 @@ Manual: reviews start only when someone triggers a review.
 **Description:** Utilize IDE integrations (such as Visual Studio Code, JetBrains, or Xcode) to request Copilot code reviews on highlighted code snippets or uncommitted/unstaged changes before pushing to a branch.
 **Reasoning:** Reviewing code locally helps catch bugs, style violations, and potential issues earlier in the development lifecycle, reducing the volume of noisy commits and back-and-forth review cycles during the actual pull request phase.
 **Example:** Tn Visual Studio Code, navigating to the Source Control view and clicking the "Copilot Code Review - Uncommitted Changes" button to get inline problem reports on local edits before running a git commit command.
+
 ---
 
 ### 2.3 Guidelines from LLM Experimentation
@@ -545,6 +590,7 @@ This subsection documents only our **agentic PR review prototype**. It does not 
 **Literature References:**  
 [1] `[Full citation]`  
 [2] `[Full citation]`  
+https://aclanthology.org/2024.findings-eacl.148.pdf 
 
 **Grey Literature References:**  
 [1] `[Blog post title and URL]`  
@@ -571,19 +617,30 @@ See Appendix A or provide a link to a separate file with full prompt-response lo
 
 
 - **C. Conflicts Resolved:** Examples of contradictory guidelines and how you resolved them
-A) LLMs as Code Review or Orchestrators
-2.1.11          -> Use AI Primarily for Quality and Standard Enforcement
-2.1.1, 2.1.17  -> Use static tools for non-cognitive tasks, and use the reasoning ability of LLMs for cognitive and agentic tasks. 
+1.  LLMs as Code Review or Orchestrators:
+2.1.11 suggests using AI Primarily for Quality and Standard Enforcement
+2.1.1, 2.1.17 suggest to use static tools for non-cognitive tasks, and use the reasoning ability of LLMs for cognitive and agentic tasks. 
 
 Resolution: Dedicated tools are more than capable of handling simple quality checks. LLMs should be used for either more complex tasks that require reasoning or as an agent that orchestrates other tools. 
 
-B) Human-in-the-loop vs Automated Meta-Evaluation
+2. Scope of AI Capability (High-level vs. Low-level):
+Guideline 2.1.11 explicitly states to use AI primarily for quality/standards and to distrust it for high-level logic.
+Guideline 2.1.14 and 2.1.17 conversely suggest using AI for high-level reviews via pseudocode decomposition and orchestrating complex evaluations.
 
+Resolution: Similar to the previous conflict, we decided to utilize Agents in high scope tasks due their reasoning capabilities. 
 
+3. Human Intervention vs. Automation:
+Guideline 2.1.8  mandates a Human-in-the-Loop for any subjective evaluation.
+Guideline 2.2.7 proposes an approach where ai agents are freer to self evaluate and automation is king.
 
-1) llms as architecture reviewers vs llms as code reviewers 
-2) 2.11-> conflict with 2.1.1
-3) 2.2.7 for delegating and automating
+Resolution: We decided to combine two approaches, and give LLM agents a constrained space and specific requirements to fulfill agents are allowed to commit on their own. 
+
+4. Instruction Density (Comprehensive vs. Focused)
+Guideline 2.1.4 advocates for highly detailed, structured prompts
+Guideline 2.2.9 arns that length has a cost and favors short, focused rules.
+
+Resolution: Fuse two approaches. While context window "dilution" is a real technical risk, the lack of structure is a much greater risk for reliability. Use metrics such as ICE-scores and better prompt engineering to improve performance by providing shorter and more precise instructions. 
+
 
 ---
 
