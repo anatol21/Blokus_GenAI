@@ -46,8 +46,8 @@ def main() -> int:
         pr_number=args.pr_number or _env_int("REVIEW_PULL_NUMBER"),
     )
 
-    json_path = Path(args.json_out)
-    markdown_path = Path(args.markdown_out)
+    json_path = _resolve_output_path(repo_root, args.json_out)
+    markdown_path = _resolve_output_path(repo_root, args.markdown_out)
     json_path.parent.mkdir(parents=True, exist_ok=True)
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(run.result.to_dict(), indent=2) + "\n", encoding="utf-8")
@@ -102,6 +102,13 @@ def _resolve_repo_root() -> Path:
         return Path(workspace).resolve()
 
     return Path(__file__).resolve().parents[2]
+
+
+def _resolve_output_path(repo_root: Path, raw_path: str) -> Path:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return path
+    return (repo_root / path).resolve()
 
 
 if __name__ == "__main__":

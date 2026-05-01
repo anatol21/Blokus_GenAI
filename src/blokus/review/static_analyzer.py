@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -23,6 +24,7 @@ _COMPILEALL_RE = re.compile(r'File "(?P<file>.+?)", line (?P<line>\d+)')
 _BASH_RE = re.compile(r"^(?P<file>.+?): line (?P<line>\d+): (?P<message>.+)$")
 _MAX_TOOL_BATCH_FILES = 1000
 _MAX_TOOL_BATCH_CHARS = 65_536
+_MAX_JSON_TOOL_OUTPUT_CHARS = 1_000_000
 
 
 @dataclass(frozen=True)
@@ -112,23 +114,17 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                for mypy_args in _build_tool_batches(
-                    [
-                        mypy_path,
-                        "--config-file",
-                        str(self.config.repo_root / "pyproject.toml"),
-                        "--show-column-numbers",
-                        "--hide-error-context",
-                        "--no-error-summary",
-                    ],
-                    python_files,
-                    supports_option_terminator=True,
-                ):
-                    mypy_run = self._run_command(
-                        mypy_args
-                    )
-                    commands.append(mypy_run.command)
-                    findings.extend(self._parse_mypy(context, mypy_run))
+                mypy_commands, cleanup_paths = self._build_mypy_commands(mypy_path, python_files)
+                try:
+                    for mypy_args in mypy_commands:
+                        mypy_run = self._run_command(
+                            mypy_args
+                        )
+                        commands.append(mypy_run.command)
+                        findings.extend(self._parse_mypy(context, mypy_run))
+                finally:
+                    for cleanup_path in cleanup_paths:
+                        cleanup_path.unlink(missing_ok=True)
 
         if shell_files:
             for bash_args in _build_tool_batches(
@@ -559,6 +555,12 @@ class StaticAnalyzer:
         tool_name: str,
         expected_shape: str,
     ) -> tuple[object | None, UncertainRisk | None]:
+        if len(tool_run.stdout) > _MAX_JSON_TOOL_OUTPUT_CHARS:
+            return None, UncertainRisk(
+                risk=f"{tool_name} output exceeded the safe JSON parsing limit.",
+                reason_uncertain=f"{tool_name} produced more than {_MAX_JSON_TOOL_OUTPUT_CHARS} characters of JSON output for one invocation, so the review skipped parsing it to avoid excessive memory and CPU use.",
+                suggested_verification=f"Rerun `{tool_run.command}` manually, narrow the changed-file set, or reduce diagnostic volume before relying on the {tool_name} results.",
+            )
         try:
             payload = json.loads(tool_run.stdout)
             if expected_shape == "array" and not isinstance(payload, list):
@@ -572,6 +574,45 @@ class StaticAnalyzer:
                 reason_uncertain=f"{tool_name} returned invalid or unexpected JSON output: {exc}",
                 suggested_verification=f"Rerun `{tool_run.command}` and inspect the raw {tool_name} output for crashes, truncation, or configuration issues.",
             )
+
+    def _build_mypy_commands(
+        self,
+        mypy_path: str,
+        python_files: list[ChangedFile],
+    ) -> tuple[list[list[str]], list[Path]]:
+        prefix_args = [
+            mypy_path,
+            "--config-file",
+            str(self.config.repo_root / "pyproject.toml"),
+            "--show-column-numbers",
+            "--hide-error-context",
+            "--no-error-summary",
+        ]
+        direct_batches = _build_tool_batches(
+            prefix_args,
+            python_files,
+            supports_option_terminator=True,
+        )
+        if len(direct_batches) <= 1:
+            return direct_batches, []
+
+        response_file = tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=self.config.repo_root,
+            prefix=".agentic-mypy-",
+            suffix=".txt",
+            delete=False,
+        )
+        response_path = Path(response_file.name)
+        try:
+            with response_file:
+                for changed_file in python_files:
+                    response_file.write(f"{_safe_tool_path(changed_file.path)}\n")
+            return [[*prefix_args, f"@{response_path}"]], [response_path]
+        except Exception:
+            response_path.unlink(missing_ok=True)
+            raise
 
 
 def _coerce_stream_text(value: bytes | str | None) -> str:

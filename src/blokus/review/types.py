@@ -49,6 +49,9 @@ class ChangedFile:
     def touches_line(self, line_number: int) -> bool:
         return any(span.contains(line_number) for span in self.line_spans)
 
+    def touches_span(self, line_start: int, line_end: int) -> bool:
+        return any(span.start <= line_end and line_start <= span.end for span in self.line_spans)
+
 
 @dataclass(frozen=True)
 class ReviewPayload:

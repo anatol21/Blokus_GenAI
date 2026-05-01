@@ -277,6 +277,50 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertIn("findings", payload)
             self.assertIn("`LGTM`", (artifact_dir / "review.md").read_text(encoding="utf-8"))
 
+    def test_main_resolves_relative_artifact_paths_from_workspace_root(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+        original_cwd = Path.cwd()
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_WORKSPACE": tmpdir,
+                "GITHUB_EVENT_PATH": "",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                "custom/review.json",
+                "--markdown-out",
+                "custom/review.md",
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+            nested_cwd = Path(tmpdir) / "nested" / "workdir"
+            nested_cwd.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chdir(nested_cwd)
+                exit_code = agentic_code_review.main()
+            finally:
+                os.chdir(original_cwd)
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((Path(tmpdir) / "custom" / "review.json").exists())
+            self.assertTrue((Path(tmpdir) / "custom" / "review.md").exists())
+            self.assertFalse((nested_cwd / "custom" / "review.json").exists())
+
     def test_module_entrypoint_imports_cleanly_from_repo_root(self) -> None:
         result = subprocess.run(
             [sys.executable, "-m", "scripts.github.agentic_code_review", "--help"],

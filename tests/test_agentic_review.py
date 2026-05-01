@@ -670,6 +670,35 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(len(response.findings), 1)
         self.assertEqual(response.findings[0].line_start, 22)
 
+    def test_specialist_response_keeps_findings_when_end_of_range_overlaps_changed_span(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=22),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Range overlap finding",
+                            "severity": "moderate",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 18,
+                            "line_end": 21,
+                            "evidence": "The reported range overlaps a changed line even though it starts earlier.",
+                            "impact": "Overlap-aware filtering should keep the finding.",
+                            "suggested_action": "Accept findings whose reported span intersects changed lines.",
+                            "blocking_recommendation": False,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertEqual(response.findings[0].line_end, 21)
+
     def test_specialist_response_drops_malformed_uncertain_risks(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=22),)
         response = _parse_specialist_response(
@@ -1785,6 +1814,36 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(len(mypy_commands), 1)
         self.assertEqual(len(commands), 3)
 
+    def test_static_analyzer_uses_single_mypy_response_file_when_batches_would_split(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(*[_changed_file(f"src/module_{index}.py") for index in range(1201)])
+        commands: list[list[str]] = []
+
+        def fake_run(args: list[str]) -> ToolRun:
+            commands.append(args)
+            if args[0] == "/ruff":
+                return ToolRun(command=" ".join(args), returncode=0, stdout="[]", stderr="")
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        mypy_commands = [args for args in commands if args[0] == "/mypy"]
+        self.assertEqual(len(mypy_commands), 1)
+        self.assertEqual(len(report.commands), 5)
+        self.assertTrue(any(argument.startswith("@") for argument in mypy_commands[0][1:]))
+        response_file = next(argument[1:] for argument in mypy_commands[0][1:] if argument.startswith("@"))
+        self.assertFalse(Path(response_file).exists())
+
     def test_static_analyzer_skips_compileall_for_shell_only_changes(self) -> None:
         config = _make_config(REPO_ROOT)
         analyzer = StaticAnalyzer(config)
@@ -1896,6 +1955,37 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(report.posture, "unavailable")
         self.assertTrue(any(risk.risk == "Ruff output could not be parsed as JSON." for risk in report.uncertain_risks))
+
+    def test_static_analyzer_bounds_large_ruff_json_output(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        context = _review_context(_changed_file("sandbox/demo.py"))
+
+        def fake_run(args: list[str]) -> ToolRun:
+            if args[0] == "/ruff":
+                return ToolRun(
+                    command=" ".join(args),
+                    returncode=1,
+                    stdout="[" + (" " * (1_000_001)),
+                    stderr="",
+                )
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        self.assertEqual(report.posture, "unavailable")
+        self.assertTrue(
+            any(risk.risk == "Ruff output exceeded the safe JSON parsing limit." for risk in report.uncertain_risks)
+        )
 
     def test_static_analyzer_marks_shellcheck_json_parse_failures_as_uncertain(self) -> None:
         config = _make_config(REPO_ROOT)

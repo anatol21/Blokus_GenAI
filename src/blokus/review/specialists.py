@@ -175,7 +175,7 @@ def _parse_specialist_response(
         line_end = _int_value(item.get("line_end"))
         if line_start is None or line_end is None:
             continue
-        if changed_file.line_spans and not changed_file.touches_line(line_start):
+        if changed_file.line_spans and not changed_file.touches_span(line_start, line_end):
             continue
 
         findings.append(
