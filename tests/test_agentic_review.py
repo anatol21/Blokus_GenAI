@@ -18,7 +18,7 @@ from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderCon
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
-from blokus.review.specialists import SpecialistRunner, _parse_specialist_response
+from blokus.review.specialists import MAX_PROMPT_FILES, SpecialistRunner, _build_prompt_context_blocks, _parse_specialist_response
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer, ToolRun
 from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
 
@@ -359,25 +359,24 @@ class AgenticReviewTests(unittest.TestCase):
             10_000,
         ), mock.patch.object(review_diff, "MAX_STORED_PATCH_CHARS", 90):
             accumulator = review_diff._PatchAccumulator(config)
-            wrapped_feed = mock.Mock(wraps=accumulator.tracker.feed)
-            accumulator.tracker.feed = wrapped_feed
-            for line in (
-                "diff --git a/src/demo.py b/src/demo.py",
-                "--- a/src/demo.py",
-                "+++ b/src/demo.py",
-                "@@ -0,0 +1,4 @@",
-                "+line 1",
-                "+line 2",
-                "+line 3",
-                "+cache lookup result",
-            ):
-                accumulator.add_line(line)
+            with mock.patch.object(accumulator.tracker, "feed", wraps=accumulator.tracker.feed) as wrapped_feed:
+                for line in (
+                    "diff --git a/src/demo.py b/src/demo.py",
+                    "--- a/src/demo.py",
+                    "+++ b/src/demo.py",
+                    "@@ -0,0 +1,4 @@",
+                    "+line 1",
+                    "+line 2",
+                    "+line 3",
+                    "+cache lookup result",
+                ):
+                    accumulator.add_line(line)
 
-        block = cast(review_diff._PatchBlock, accumulator.build())
+                block = cast(review_diff._PatchBlock, accumulator.build())
 
-        self.assertTrue(block.patch_truncated)
-        self.assertTrue(block.analysis_truncated)
-        self.assertEqual(wrapped_feed.call_count, 5)
+                self.assertTrue(block.patch_truncated)
+                self.assertTrue(block.analysis_truncated)
+                self.assertEqual(wrapped_feed.call_count, 5)
 
     def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
         patch_text = "\n".join(
@@ -647,6 +646,37 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(response.findings, ())
 
+    def test_specialist_response_normalizes_common_enum_variants(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Enum normalization",
+                            "severity": "HIGH",
+                            "confidence": "Moderate",
+                            "category": "static_analysis",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "The provider used alternate casing and separators.",
+                            "impact": "The finding should still survive normalization.",
+                            "suggested_action": "Normalize specialist enums before validation.",
+                            "blocking_recommendation": True,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertEqual(response.findings[0].severity, "high")
+        self.assertEqual(response.findings[0].confidence, "medium")
+        self.assertEqual(response.findings[0].category, "static-analysis")
+
     def test_specialist_response_parses_uncertain_risks_and_note(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
         response = _parse_specialist_response(
@@ -783,6 +813,46 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.findings, ())
         self.assertEqual(len(response.uncertain_risks), 1)
         self.assertIn("did not match the current diff", response.uncertain_risks[0].risk)
+
+    def test_prompt_context_blocks_cap_changed_file_list(self) -> None:
+        files = tuple(
+            _changed_file(f"src/generated_{index}.py", line_start=index + 1, line_end=index + 1)
+            for index in range(MAX_PROMPT_FILES + 5)
+        )
+        context = _review_context(*files)
+
+        blocks = _build_prompt_context_blocks(context, files)
+
+        listed_paths = [line for line in blocks.file_list.splitlines() if line.startswith("- src/generated_")]
+        self.assertEqual(len(listed_paths), MAX_PROMPT_FILES)
+        self.assertTrue(blocks.truncated)
+        self.assertIn("... additional changed files omitted", blocks.file_list)
+
+    def test_build_summary_tolerates_unrecognized_severity_values(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=20, line_end=20))
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
+        findings = [
+            Finding(
+                id="bad-severity",
+                title="Unexpected severity token",
+                severity="severe",
+                confidence="high",
+                category="correctness",
+                file="src/blokus/engine.py",
+                line_start=20,
+                line_end=20,
+                evidence="The provider returned a non-canonical severity.",
+                impact="Summary generation should not crash.",
+                suggested_action="Treat unknown severities as lowest priority.",
+                blocking_recommendation=False,
+            )
+        ]
+
+        summary = coordinator._build_summary(context, findings, static_report, False, True)
+
+        self.assertEqual(summary.overall_risk, context.impact)
 
     def test_specialist_runner_loads_only_requested_prompt(self) -> None:
         config = _make_config(REPO_ROOT)

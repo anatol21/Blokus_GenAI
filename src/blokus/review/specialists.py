@@ -184,13 +184,17 @@ def _parse_specialist_response(
         if changed_file.line_spans and not changed_file.touches_span(line_start, line_end):
             continue
 
+        severity = _normalize_severity(item["severity"])
+        confidence = _normalize_confidence(item["confidence"])
+        category = _normalize_category(item["category"])
+
         findings.append(
             Finding(
                 id=str(item.get("id") or stable_finding_id(specialist, path, line_start, item.get("title", ""))),
                 title=str(item["title"]),
-                severity=str(item["severity"]),
-                confidence=str(item["confidence"]),
-                category=str(item["category"]),
+                severity=severity,
+                confidence=confidence,
+                category=category,
                 file=path,
                 line_start=line_start,
                 line_end=line_end,
@@ -268,6 +272,26 @@ def _parse_blocking_recommendation(value: object) -> bool:
     return False
 
 
+def _normalize_severity(value: object) -> str:
+    normalized = str(value).strip().lower()
+    return {
+        "medium": "moderate",
+        "med": "moderate",
+    }.get(normalized, normalized)
+
+
+def _normalize_confidence(value: object) -> str:
+    normalized = str(value).strip().lower()
+    return {
+        "moderate": "medium",
+        "med": "medium",
+    }.get(normalized, normalized)
+
+
+def _normalize_category(value: object) -> str:
+    return str(value).strip().lower().replace("_", "-").replace(" ", "-")
+
+
 def _load_json_object(raw_response: str) -> dict[str, object]:
     try:
         return json.loads(raw_response)
@@ -290,12 +314,13 @@ def _build_prompt_context_blocks(
     context: ReviewContext,
     files: tuple[ChangedFile, ...],
 ) -> _PromptContextBlocks:
-    file_paths = [changed_file.path for changed_file in files]
+    file_count = len(files)
+    file_paths = [changed_file.path for changed_file in files[:MAX_PROMPT_FILES]]
     truncated = context.commit_context_truncated or len(context.commits) > MAX_PROMPT_COMMITS
     file_list = _bullet_block(
-        file_paths[:MAX_PROMPT_FILES],
+        file_paths,
         "... additional changed files omitted",
-        len(file_paths) > MAX_PROMPT_FILES,
+        file_count > MAX_PROMPT_FILES,
     )
     commit_block = _bullet_block(
         list(context.commits[:MAX_PROMPT_COMMITS]),
@@ -305,7 +330,7 @@ def _build_prompt_context_blocks(
     return _PromptContextBlocks(
         file_list=file_list or "- none",
         commit_block=commit_block or "- none",
-        truncated=truncated or len(file_paths) > MAX_PROMPT_FILES,
+        truncated=truncated or file_count > MAX_PROMPT_FILES,
     )
 
 

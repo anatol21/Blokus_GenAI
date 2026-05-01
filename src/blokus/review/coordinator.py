@@ -12,7 +12,7 @@ from blokus.review.provider import OpenRouterClient, ProviderUnavailable
 from blokus.review.renderer import render_review_markdown
 from blokus.review.specialists import SpecialistRunner, prompt_context_was_truncated
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer
-from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
+from blokus.review.types import ChangedFile, Finding, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SEVERITY_ORDER, SpecialistResponse, UncertainRisk
 
 ALLOWED_FINDING_CATEGORIES = {
     "correctness",
@@ -256,7 +256,7 @@ class ReviewCoordinator:
         if findings:
             overall_risk = max(
                 [context.impact, *[finding.severity for finding in findings]],
-                key=lambda severity: {"low": 1, "moderate": 2, "high": 3, "critical": 4}[severity],
+                key=lambda severity: SEVERITY_ORDER.get(severity, 0),
             )
 
         test_findings = [finding for finding in findings if finding.category == "tests"]

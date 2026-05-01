@@ -224,7 +224,11 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
                 "LGTM",
             )
             self.assertIn("`LGTM`", (Path(tmpdir) / "review.md").read_text(encoding="utf-8"))
-            client_cls.return_value.upsert_issue_comment.assert_called_once()
+            client_cls.return_value.upsert_issue_comment.assert_called_once_with(
+                run.context.pr.number,
+                "agentic-code-review",
+                run.markdown,
+            )
 
     def test_main_fails_non_lgtm_and_skips_comment_for_forks(self) -> None:
         config = _make_config()
@@ -350,6 +354,86 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["pr_number"], 0)
             self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["base_ref"], "")
             self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["head_ref"], "")
+
+    def test_main_uses_environment_ref_fallbacks_when_cli_overrides_are_absent(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_EVENT_PATH": "",
+                "REVIEW_PULL_NUMBER": "44",
+                "REVIEW_BASE_REF": "env-base",
+                "REVIEW_HEAD_REF": "env-head",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["pr_number"], 44)
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["base_ref"], "env-base")
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["head_ref"], "env-head")
+
+    def test_main_forwards_invalid_environment_pr_number_as_none(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_EVENT_PATH": "",
+                "REVIEW_PULL_NUMBER": "not-a-number",
+                "REVIEW_BASE_REF": "env-base",
+                "REVIEW_HEAD_REF": "env-head",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertIsNone(coordinator_cls.return_value.run.call_args.kwargs["pr_number"])
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["base_ref"], "env-base")
+            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["head_ref"], "env-head")
 
     def test_main_resolves_relative_artifact_paths_from_workspace_root(self) -> None:
         config = _make_config()
