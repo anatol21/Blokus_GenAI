@@ -21,7 +21,8 @@ _MYPY_RE = re.compile(
 )
 _COMPILEALL_RE = re.compile(r'File "(?P<file>.+?)", line (?P<line>\d+)')
 _BASH_RE = re.compile(r"^(?P<file>.+?): line (?P<line>\d+): (?P<message>.+)$")
-_MAX_TOOL_BATCH_FILES = 100
+_MAX_TOOL_BATCH_FILES = 1000
+_MAX_TOOL_BATCH_CHARS = 65_536
 
 
 @dataclass(frozen=True)
@@ -68,10 +69,11 @@ class StaticAnalyzer:
         unavailable_tools = False
 
         if python_files:
-            for batch in _chunk_changed_files(python_files):
-                compileall_run = self._run_command(
-                    [sys.executable, "-m", "compileall", *[item.path for item in batch]]
-                )
+            for compileall_args in _build_tool_batches(
+                [sys.executable, "-m", "compileall"],
+                python_files,
+            ):
+                compileall_run = self._run_command(compileall_args)
                 commands.append(compileall_run.command)
                 findings.extend(self._parse_compileall(context, compileall_run))
 
@@ -87,8 +89,12 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                for batch in _chunk_changed_files(python_files):
-                    ruff_run = self._run_command([ruff_path, "check", "--output-format", "json", *[item.path for item in batch]])
+                for ruff_args in _build_tool_batches(
+                    [ruff_path, "check", "--output-format", "json"],
+                    python_files,
+                    supports_option_terminator=True,
+                ):
+                    ruff_run = self._run_command(ruff_args)
                     commands.append(ruff_run.command)
                     parsed = self._parse_ruff(context, ruff_run)
                     findings.extend(parsed.findings)
@@ -106,26 +112,33 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                for batch in _chunk_changed_files(python_files):
+                for mypy_args in _build_tool_batches(
+                    [
+                        mypy_path,
+                        "--config-file",
+                        str(self.config.repo_root / "pyproject.toml"),
+                        "--show-column-numbers",
+                        "--hide-error-context",
+                        "--no-error-summary",
+                    ],
+                    python_files,
+                    supports_option_terminator=True,
+                ):
                     mypy_run = self._run_command(
-                        [
-                            mypy_path,
-                            "--config-file",
-                            str(self.config.repo_root / "pyproject.toml"),
-                            "--show-column-numbers",
-                            "--hide-error-context",
-                            "--no-error-summary",
-                            *[item.path for item in batch],
-                        ]
+                        mypy_args
                     )
                     commands.append(mypy_run.command)
                     findings.extend(self._parse_mypy(context, mypy_run))
 
         if shell_files:
-            for batch in _chunk_changed_files(shell_files):
-                bash_run = self._run_command(["bash", "-n", *[item.path for item in batch]])
+            for bash_args in _build_tool_batches(
+                ["bash", "-n"],
+                shell_files,
+                supports_option_terminator=True,
+            ):
+                bash_run = self._run_command(bash_args)
                 commands.append(bash_run.command)
-                findings.extend(self._parse_bash(batch, bash_run))
+                findings.extend(self._parse_bash(shell_files, bash_run))
 
             shellcheck_path = self._discover_tool("shellcheck")
             if shellcheck_path is None:
@@ -138,10 +151,14 @@ class StaticAnalyzer:
                     )
                 )
             else:
-                for batch in _chunk_changed_files(shell_files):
-                    shellcheck_run = self._run_command([shellcheck_path, "-f", "json1", *[item.path for item in batch]])
+                for shellcheck_args in _build_tool_batches(
+                    [shellcheck_path, "-f", "json1"],
+                    shell_files,
+                    supports_option_terminator=True,
+                ):
+                    shellcheck_run = self._run_command(shellcheck_args)
                     commands.append(shellcheck_run.command)
-                    parsed = self._parse_shellcheck(batch, shellcheck_run)
+                    parsed = self._parse_shellcheck(shell_files, shellcheck_run)
                     findings.extend(parsed.findings)
                     uncertain_risks.extend(parsed.uncertain_risks)
                     unavailable_tools = unavailable_tools or parsed.unavailable
@@ -595,8 +612,45 @@ def _lookup_changed_file(context: ReviewContext, path: str, line_number: int) ->
     return None
 
 
-def _chunk_changed_files(changed_files: list[ChangedFile]) -> list[list[ChangedFile]]:
-    return [
-        changed_files[index : index + _MAX_TOOL_BATCH_FILES]
-        for index in range(0, len(changed_files), _MAX_TOOL_BATCH_FILES)
-    ]
+def _build_tool_batches(
+    prefix_args: list[str],
+    changed_files: list[ChangedFile],
+    *,
+    supports_option_terminator: bool = False,
+) -> list[list[str]]:
+    if not changed_files:
+        return []
+
+    prefix = [*prefix_args]
+    if supports_option_terminator:
+        prefix.append("--")
+    prefix_cost = sum(len(arg) + 1 for arg in prefix)
+
+    batches: list[list[str]] = []
+    current_paths: list[str] = []
+    current_cost = prefix_cost
+
+    for changed_file in changed_files:
+        safe_path = _safe_tool_path(changed_file.path)
+        path_cost = len(safe_path) + 1
+        if current_paths and (
+            len(current_paths) >= _MAX_TOOL_BATCH_FILES
+            or current_cost + path_cost > _MAX_TOOL_BATCH_CHARS
+        ):
+            batches.append([*prefix, *current_paths])
+            current_paths = []
+            current_cost = prefix_cost
+
+        current_paths.append(safe_path)
+        current_cost += path_cost
+
+    if current_paths:
+        batches.append([*prefix, *current_paths])
+    return batches
+
+
+def _safe_tool_path(path: str) -> str:
+    normalized = Path(path).as_posix()
+    if normalized.startswith("-"):
+        return f"./{normalized}"
+    return normalized

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import PurePosixPath
 from typing import cast
@@ -23,24 +23,18 @@ class _PromptContextBlocks:
     commit_block: str
     truncated: bool
 
+
 @dataclass(frozen=True)
 class SpecialistRunner:
     """Invoke specialist prompts against the configured provider."""
 
     config: ReviewConfig
     provider: OpenRouterClient
+    _specialist_prompt_cache: dict[str, str] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @cached_property
     def _common_prompt(self) -> str:
         return load_prompt(self.config, "review-common")
-
-    @cached_property
-    def _specialist_prompts(self) -> dict[str, str]:
-        return {
-            "correctness": load_prompt(self.config, "review-correctness"),
-            "tests": load_prompt(self.config, "review-tests"),
-            "performance": load_prompt(self.config, "review-performance"),
-        }
 
     def run(
         self,
@@ -52,14 +46,20 @@ class SpecialistRunner:
         if not files:
             return SpecialistResponse(findings=(), note="No relevant files were available for this specialist.")
 
-        #common_prompt = load_prompt(self.config, "review-common")
-        #specialist_prompt = load_prompt(self.config, f"review-{specialist}")
-        #system_prompt = f"{common_prompt}\n\n{specialist_prompt}"
-        specialist_prompt = self._specialist_prompts.get(specialist)
-        if specialist_prompt is None:
-            specialist_prompt = load_prompt(self.config, f"review-{specialist}")
-
-        system_prompt = f"{self._common_prompt}\n\n{specialist_prompt}"
+        try:
+            system_prompt = f"{self._common_prompt}\n\n{self._specialist_prompt(specialist)}"
+        except FileNotFoundError:
+            return SpecialistResponse(
+                findings=(),
+                uncertain_risks=(
+                    UncertainRisk(
+                        risk="A specialist prompt asset was unavailable.",
+                        reason_uncertain=f"The `{specialist}` specialist prompt could not be loaded from the configured prompt directory.",
+                        suggested_verification=f"Restore `.github/prompts/review-{specialist}.md` or update the configured prompt path before rerunning the review.",
+                    ),
+                ),
+                note=f"Prompt asset missing for specialist `{specialist}`.",
+            )
         user_prompt = _build_user_prompt(specialist, context, files, rendered_diff)
         raw_response = self.provider.complete(
             model=self.config.model_for(specialist),
@@ -67,6 +67,13 @@ class SpecialistRunner:
             user_prompt=user_prompt,
         )
         return _parse_specialist_response(raw_response, specialist, files)
+
+    def _specialist_prompt(self, specialist: str) -> str:
+        prompt = self._specialist_prompt_cache.get(specialist)
+        if prompt is None:
+            prompt = load_prompt(self.config, f"review-{specialist}")
+            self._specialist_prompt_cache[specialist] = prompt
+        return prompt
 
 
 def _build_user_prompt(

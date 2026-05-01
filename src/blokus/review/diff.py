@@ -24,8 +24,10 @@ _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 @dataclass(frozen=True)
 class _PatchBlock:
     path: str
+    status: str
     patch: str
     line_spans: tuple[LineSpan, ...]
+    old_path: str | None
     performance_sensitive: bool
     patch_truncated: bool
 
@@ -90,6 +92,7 @@ class _LineSpanTracker:
 class _PatchAccumulator:
     config: ReviewConfig
     tracker: _LineSpanTracker = field(default_factory=_LineSpanTracker)
+    status: str = "M"
     old_path: str | None = None
     new_path: str | None = None
     stored_parts: list[str] = field(default_factory=list)
@@ -114,17 +117,41 @@ class _PatchAccumulator:
 
         return _PatchBlock(
             path=path,
+            status=self.status,
             patch=patch,
             line_spans=self.tracker.finish(),
+            old_path=self.old_path if self.old_path != path else None,
             performance_sensitive=self.performance_sensitive,
             patch_truncated=self.patch_truncated,
         )
 
     def _track_paths(self, line: str) -> None:
-        if line.startswith("--- "):
+        if line.startswith("diff --git "):
+            old_path, new_path = _parse_diff_header_paths(line)
+            if old_path is not None:
+                self.old_path = old_path
+            if new_path is not None:
+                self.new_path = new_path
+        elif line.startswith("--- "):
             self.old_path = _normalize_patch_path(line[4:])
         elif line.startswith("+++ "):
             self.new_path = _normalize_patch_path(line[4:])
+        elif line.startswith("rename from "):
+            self.status = "R"
+            self.old_path = _normalize_patch_path(line[len("rename from ") :])
+        elif line.startswith("rename to "):
+            self.status = "R"
+            self.new_path = _normalize_patch_path(line[len("rename to ") :])
+        elif line.startswith("copy from "):
+            self.status = "C"
+            self.old_path = _normalize_patch_path(line[len("copy from ") :])
+        elif line.startswith("copy to "):
+            self.status = "C"
+            self.new_path = _normalize_patch_path(line[len("copy to ") :])
+        elif line.startswith("new file mode "):
+            self.status = "A"
+        elif line.startswith("deleted file mode "):
+            self.status = "D"
 
     def _track_performance(self, line: str) -> None:
         if self.performance_sensitive:
@@ -233,43 +260,20 @@ def _resolve_refs(
 
 def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> tuple[ChangedFile, ...]:
     diff_ref = f"{base_ref}...{head_ref}"
-    name_status_by_path = _load_name_status_by_path(config.repo_root, diff_ref)
     changed_files: list[ChangedFile] = []
 
     for patch_block in _iter_git_patch_blocks(config, config.repo_root, ["diff", "--unified=3", diff_ref]):
-        path = patch_block.path
-        status, old_path = name_status_by_path.get(path, ("M", None))
-
         changed_files.append(
             ChangedFile(
-                path=path,
-                status=status,
+                path=patch_block.path,
+                status=patch_block.status,
                 patch=patch_block.patch,
                 line_spans=patch_block.line_spans,
-                executable=_is_executable_path(path),
-                categories=tuple(_categorize_path(path)),
-                old_path=old_path,
+                executable=_is_executable_path(patch_block.path),
+                categories=tuple(_categorize_path(patch_block.path)),
+                old_path=patch_block.old_path,
                 performance_sensitive=patch_block.performance_sensitive,
                 patch_truncated=patch_block.patch_truncated,
-            )
-        )
-
-    patched_paths = {changed_file.path for changed_file in changed_files}
-    for path, (status, old_path) in name_status_by_path.items():
-        if path in patched_paths:
-            continue
-
-        changed_files.append(
-            ChangedFile(
-                path=path,
-                status=status,
-                patch="",
-                line_spans=(),
-                executable=_is_executable_path(path),
-                categories=tuple(_categorize_path(path)),
-                old_path=old_path,
-                performance_sensitive=_is_performance_sensitive(config, path, ""),
-                patch_truncated=False,
             )
         )
 
@@ -286,22 +290,6 @@ def _parse_line_spans(patch_text: str) -> list[LineSpan]:
     for raw_line in patch_text.splitlines():
         tracker.feed(raw_line)
     return list(tracker.finish())
-
-
-def _load_name_status_by_path(repo_root: Path, diff_ref: str) -> dict[str, tuple[str, str | None]]:
-    name_status_by_path: dict[str, tuple[str, str | None]] = {}
-
-    for line in _git_lines(repo_root, ["diff", "--name-status", diff_ref]):
-        parts = line.split("\t")
-        if not parts:
-            continue
-
-        status = parts[0]
-        old_path = parts[1] if status.startswith(("R", "C")) and len(parts) > 2 else None
-        path = parts[-1]
-        name_status_by_path[path] = (status, old_path)
-
-    return name_status_by_path
 
 
 def _iter_git_patch_blocks(
@@ -366,6 +354,14 @@ def _normalize_patch_path(raw_path: str) -> str:
     if stripped.startswith(("a/", "b/")):
         stripped = stripped[2:]
     return stripped.strip('"')
+
+
+def _parse_diff_header_paths(line: str) -> tuple[str | None, str | None]:
+    parts = line.split(maxsplit=3)
+    if len(parts) < 4:
+        return None, None
+    old_path, new_path = parts[2], parts[3]
+    return _normalize_patch_path(old_path), _normalize_patch_path(new_path)
 
 
 def _nested_sha(value: object) -> str | None:
