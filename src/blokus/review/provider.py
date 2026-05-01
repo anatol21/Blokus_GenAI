@@ -6,6 +6,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -83,10 +84,21 @@ class OpenRouterClient:
         if body is None:
             raise ProviderUnavailable("OpenRouter request did not produce a response body.")
 
-        try:
-            return str(body["choices"][0]["message"]["content"]).strip()
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderUnavailable("OpenRouter response did not contain a usable message.") from exc
+        if not isinstance(body, dict):
+            raise ProviderUnavailable("OpenRouter response did not contain a usable message.")
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ProviderUnavailable("OpenRouter response did not contain a usable message.")
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise ProviderUnavailable("OpenRouter response did not contain a usable message.")
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise ProviderUnavailable("OpenRouter response did not contain a usable message.")
+        content = message.get("content")
+        if content is None:
+            raise ProviderUnavailable("OpenRouter response did not contain a usable message.")
+        return str(cast(object, content)).strip()
 
 
 def _is_retryable_http_error(error: HTTPError) -> bool:

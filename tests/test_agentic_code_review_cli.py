@@ -196,6 +196,10 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
                 json.loads((Path(tmpdir) / "review.json").read_text(encoding="utf-8"))["summary"]["overall_risk"],
                 "moderate",
             )
+            self.assertEqual(
+                json.loads((Path(tmpdir) / "review.json").read_text(encoding="utf-8"))["verdict"],
+                "LGTM",
+            )
             self.assertIn("`LGTM`", (Path(tmpdir) / "review.md").read_text(encoding="utf-8"))
             client_cls.return_value.upsert_issue_comment.assert_called_once()
 
@@ -275,6 +279,7 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             payload = json.loads((artifact_dir / "review.json").read_text(encoding="utf-8"))
             self.assertIn("summary", payload)
             self.assertIn("findings", payload)
+            self.assertEqual(payload["verdict"], "LGTM")
             self.assertIn("`LGTM`", (artifact_dir / "review.md").read_text(encoding="utf-8"))
 
     def test_main_resolves_relative_artifact_paths_from_workspace_root(self) -> None:

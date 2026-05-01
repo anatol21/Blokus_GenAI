@@ -55,13 +55,14 @@ class ReviewConfig:
 
     def model_for(self, specialist: str) -> str:
         override_map = {
-            "correctness": os.environ.get("REVIEW_MODEL_CORRECTNESS"),
-            "tests": os.environ.get("REVIEW_MODEL_TESTS"),
-            "performance": os.environ.get("REVIEW_MODEL_PERFORMANCE"),
+            "correctness": _normalized_env_value("REVIEW_MODEL_CORRECTNESS"),
+            "tests": _normalized_env_value("REVIEW_MODEL_TESTS"),
+            "performance": _normalized_env_value("REVIEW_MODEL_PERFORMANCE"),
         }
-        if override_map.get(specialist):
-            return override_map[specialist] or ""
-        default_override = os.environ.get("REVIEW_MODEL_DEFAULT")
+        specialist_override = override_map.get(specialist, "")
+        if specialist_override:
+            return specialist_override
+        default_override = _normalized_env_value("REVIEW_MODEL_DEFAULT")
         if default_override:
             return default_override
         specialist_model = self.models.get(specialist, "").strip()
@@ -98,37 +99,48 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"Agentic review config at `{config_path}` is not valid TOML: {exc}") from exc
 
-    provider_block = raw["provider"]
-    performance_block = raw["performance"]
-    heuristics_block = raw["heuristics"]
-    models_block = raw["models"]
+    try:
+        provider_block = raw["provider"]
+        performance_block = raw["performance"]
+        heuristics_block = raw["heuristics"]
+        models_block = raw["models"]
 
-    config = ReviewConfig(
-        repo_root=root,
-        max_findings=int(raw["max_findings"]),
-        excluded_globs=tuple(raw["excluded_globs"]),
-        blocking_severities=tuple(raw["blocking_severities"]),
-        prompt_dir=root / raw["prompt_dir"],
-        spec_path=root / raw["spec_path"],
-        schema_path=root / raw["schema_path"],
-        provider=ProviderConfig(
-            name=str(provider_block["name"]),
-            base_url=str(provider_block["base_url"]),
-            timeout_seconds=int(provider_block["timeout_seconds"]),
-            max_retries=int(provider_block["max_retries"]),
-        ),
-        performance=PerformanceConfig(
-            path_markers=tuple(performance_block["path_markers"]),
-            diff_markers=tuple(performance_block["diff_markers"]),
-        ),
-        heuristics=HeuristicConfig(
-            schema_test_paths=tuple(heuristics_block["schema_test_paths"]),
-            fixture_test_paths=tuple(heuristics_block["fixture_test_paths"]),
-            cli_test_paths=tuple(heuristics_block["cli_test_paths"]),
-            serialization_paths=tuple(heuristics_block["serialization_paths"]),
-            dependency_files=tuple(heuristics_block["dependency_files"]),
-        ),
-        models={str(key): str(value) for key, value in models_block.items()},
-    )
+        config = ReviewConfig(
+            repo_root=root,
+            max_findings=int(raw["max_findings"]),
+            excluded_globs=tuple(raw["excluded_globs"]),
+            blocking_severities=tuple(raw["blocking_severities"]),
+            prompt_dir=root / raw["prompt_dir"],
+            spec_path=root / raw["spec_path"],
+            schema_path=root / raw["schema_path"],
+            provider=ProviderConfig(
+                name=str(provider_block["name"]),
+                base_url=str(provider_block["base_url"]),
+                timeout_seconds=int(provider_block["timeout_seconds"]),
+                max_retries=int(provider_block["max_retries"]),
+            ),
+            performance=PerformanceConfig(
+                path_markers=tuple(performance_block["path_markers"]),
+                diff_markers=tuple(performance_block["diff_markers"]),
+            ),
+            heuristics=HeuristicConfig(
+                schema_test_paths=tuple(heuristics_block["schema_test_paths"]),
+                fixture_test_paths=tuple(heuristics_block["fixture_test_paths"]),
+                cli_test_paths=tuple(heuristics_block["cli_test_paths"]),
+                serialization_paths=tuple(heuristics_block["serialization_paths"]),
+                dependency_files=tuple(heuristics_block["dependency_files"]),
+            ),
+            models={str(key): str(value) for key, value in models_block.items()},
+        )
+    except KeyError as exc:
+        raise ValueError(
+            f"Agentic review config at `{config_path}` is missing required key `{exc.args[0]}`."
+        ) from exc
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Agentic review config at `{config_path}` contains an invalid value: {exc}") from exc
     config.validate_provider()
     return config
+
+
+def _normalized_env_value(name: str) -> str:
+    return (os.environ.get(name) or "").strip()

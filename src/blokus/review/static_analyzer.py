@@ -25,6 +25,7 @@ _BASH_RE = re.compile(r"^(?P<file>.+?): line (?P<line>\d+): (?P<message>.+)$")
 _MAX_TOOL_BATCH_FILES = 1000
 _MAX_TOOL_BATCH_CHARS = 65_536
 _MAX_JSON_TOOL_OUTPUT_CHARS = 1_000_000
+_MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES = 400
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ class StaticAnalyzer:
         uncertain_risks: list[UncertainRisk] = []
         commands: list[str] = []
         unavailable_tools = False
+        skip_expensive_python_tools = len(python_files) > _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES
 
         if python_files:
             for compileall_args in _build_tool_batches(
@@ -80,51 +82,64 @@ class StaticAnalyzer:
                 findings.extend(self._parse_compileall(context, compileall_run))
 
         if python_files:
-            ruff_path = self._discover_tool("ruff")
-            if ruff_path is None:
+            if skip_expensive_python_tools:
                 unavailable_tools = True
                 uncertain_risks.append(
                     UncertainRisk(
-                        risk="Ruff was unavailable for changed Python files.",
-                        reason_uncertain="`ruff` was not found on PATH or under `.venv/bin`.",
-                        suggested_verification="Install Ruff or run `ruff check <changed-python-files>` manually.",
+                        risk="Expensive Python static analysis was skipped for a very large change set.",
+                        reason_uncertain=(
+                            f"The diff touched {len(python_files)} Python files, which exceeds the bounded review limit "
+                            f"of {_MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES} files for Ruff and Mypy."
+                        ),
+                        suggested_verification="Run Ruff and Mypy manually for the full change set or split the change into smaller PRs.",
                     )
                 )
             else:
-                for ruff_args in _build_tool_batches(
-                    [ruff_path, "check", "--output-format", "json"],
-                    python_files,
-                    supports_option_terminator=True,
-                ):
-                    ruff_run = self._run_command(ruff_args)
-                    commands.append(ruff_run.command)
-                    parsed = self._parse_ruff(context, ruff_run)
-                    findings.extend(parsed.findings)
-                    uncertain_risks.extend(parsed.uncertain_risks)
-                    unavailable_tools = unavailable_tools or parsed.unavailable
-
-            mypy_path = self._discover_tool("mypy")
-            if mypy_path is None:
-                unavailable_tools = True
-                uncertain_risks.append(
-                    UncertainRisk(
-                        risk="Mypy was unavailable for changed Python files.",
-                        reason_uncertain="`mypy` was not found on PATH or under `.venv/bin`.",
-                        suggested_verification="Install Mypy or run `mypy <changed-python-files>` manually.",
-                    )
-                )
-            else:
-                mypy_commands, cleanup_paths = self._build_mypy_commands(mypy_path, python_files)
-                try:
-                    for mypy_args in mypy_commands:
-                        mypy_run = self._run_command(
-                            mypy_args
+                ruff_path = self._discover_tool("ruff")
+                if ruff_path is None:
+                    unavailable_tools = True
+                    uncertain_risks.append(
+                        UncertainRisk(
+                            risk="Ruff was unavailable for changed Python files.",
+                            reason_uncertain="`ruff` was not found on PATH or under `.venv/bin`.",
+                            suggested_verification="Install Ruff or run `ruff check <changed-python-files>` manually.",
                         )
-                        commands.append(mypy_run.command)
-                        findings.extend(self._parse_mypy(context, mypy_run))
-                finally:
-                    for cleanup_path in cleanup_paths:
-                        cleanup_path.unlink(missing_ok=True)
+                    )
+                else:
+                    for ruff_args in _build_tool_batches(
+                        [ruff_path, "check", "--output-format", "json"],
+                        python_files,
+                        supports_option_terminator=True,
+                    ):
+                        ruff_run = self._run_command(ruff_args)
+                        commands.append(ruff_run.command)
+                        parsed = self._parse_ruff(context, ruff_run)
+                        findings.extend(parsed.findings)
+                        uncertain_risks.extend(parsed.uncertain_risks)
+                        unavailable_tools = unavailable_tools or parsed.unavailable
+
+                mypy_path = self._discover_tool("mypy")
+                if mypy_path is None:
+                    unavailable_tools = True
+                    uncertain_risks.append(
+                        UncertainRisk(
+                            risk="Mypy was unavailable for changed Python files.",
+                            reason_uncertain="`mypy` was not found on PATH or under `.venv/bin`.",
+                            suggested_verification="Install Mypy or run `mypy <changed-python-files>` manually.",
+                        )
+                    )
+                else:
+                    mypy_commands, cleanup_paths = self._build_mypy_commands(mypy_path, python_files)
+                    try:
+                        for mypy_args in mypy_commands:
+                            mypy_run = self._run_command(
+                                mypy_args
+                            )
+                            commands.append(mypy_run.command)
+                            findings.extend(self._parse_mypy(context, mypy_run))
+                    finally:
+                        for cleanup_path in cleanup_paths:
+                            cleanup_path.unlink(missing_ok=True)
 
         if shell_files:
             for bash_args in _build_tool_batches(

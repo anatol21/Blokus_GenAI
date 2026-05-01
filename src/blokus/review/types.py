@@ -169,6 +169,7 @@ class ReviewResult:
             "summary": self.summary.to_dict(),
             "findings": [finding.to_dict() for finding in self.findings],
             "uncertain_risks": [risk.to_dict() for risk in self.uncertain_risks],
+            "verdict": self.verdict,
         }
 
 

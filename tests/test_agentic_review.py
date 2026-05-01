@@ -145,6 +145,19 @@ class AgenticReviewTests(unittest.TestCase):
             self.assertEqual(config.model_for("correctness"), "env-correctness")
             self.assertEqual(config.model_for("tests"), "env-default")
 
+    def test_model_for_ignores_blank_environment_overrides(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REVIEW_MODEL_DEFAULT": "   ",
+                "REVIEW_MODEL_CORRECTNESS": "   ",
+            },
+            clear=False,
+        ):
+            config = load_review_config(repo_root=REPO_ROOT)
+            self.assertEqual(config.model_for("correctness"), config.models["correctness"])
+            self.assertEqual(config.model_for("tests"), config.models["default"])
+
     def test_load_review_config_rejects_missing_config_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaisesRegex(ValueError, "Agentic review config was not found"):
@@ -157,6 +170,17 @@ class AgenticReviewTests(unittest.TestCase):
             (repo_root / ".github" / "agentic-review.toml").write_text("not = [valid", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "is not valid TOML"):
+                load_review_config(repo_root=repo_root)
+
+    def test_load_review_config_rejects_missing_required_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".github").mkdir()
+            config_text = (REPO_ROOT / ".github" / "agentic-review.toml").read_text(encoding="utf-8")
+            config_text = config_text.replace("[provider]", "")
+            (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "missing required key"):
                 load_review_config(repo_root=repo_root)
 
     def test_validate_provider_rejects_negative_retry_budget(self) -> None:
@@ -1754,6 +1778,10 @@ class AgenticReviewTests(unittest.TestCase):
 
     def _assert_review_payload_matches_schema(self, payload: dict[str, object], schema: dict[str, object]) -> None:
         self.assertEqual(set(payload.keys()), set(cast(list[str], schema["required"])))
+        self.assertIn(
+            payload["verdict"],
+            cast(list[str], cast(dict[str, object], cast(dict[str, object], schema["properties"])["verdict"])["enum"]),
+        )
 
         properties = cast(dict[str, object], schema["properties"])
         pr_payload = cast(dict[str, object], payload["pr"])
@@ -1887,16 +1915,14 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(len(mypy_commands), 1)
         self.assertEqual(len(commands), 3)
 
-    def test_static_analyzer_uses_single_mypy_response_file_when_batches_would_split(self) -> None:
+    def test_static_analyzer_skips_ruff_and_mypy_for_very_large_python_change_sets(self) -> None:
         config = _make_config(REPO_ROOT)
         analyzer = StaticAnalyzer(config)
-        context = _review_context(*[_changed_file(f"src/module_{index}.py") for index in range(1201)])
+        context = _review_context(*[_changed_file(f"src/module_{index}.py") for index in range(401)])
         commands: list[list[str]] = []
 
         def fake_run(args: list[str]) -> ToolRun:
             commands.append(args)
-            if args[0] == "/ruff":
-                return ToolRun(command=" ".join(args), returncode=0, stdout="[]", stderr="")
             return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
 
         with mock.patch.object(
@@ -1910,11 +1936,32 @@ class AgenticReviewTests(unittest.TestCase):
         ):
             report = analyzer.analyze(context)
 
-        mypy_commands = [args for args in commands if args[0] == "/mypy"]
-        self.assertEqual(len(mypy_commands), 1)
-        self.assertEqual(len(report.commands), 5)
-        self.assertTrue(any(argument.startswith("@") for argument in mypy_commands[0][1:]))
-        response_file = next(argument[1:] for argument in mypy_commands[0][1:] if argument.startswith("@"))
+        self.assertEqual(len(commands), 1)
+        self.assertIn("compileall", report.commands[0])
+        self.assertFalse(any(args[0] == "/ruff" for args in commands))
+        self.assertFalse(any(args[0] == "/mypy" for args in commands))
+        self.assertTrue(
+            any(risk.risk == "Expensive Python static analysis was skipped for a very large change set." for risk in report.uncertain_risks)
+        )
+        self.assertIn(report.posture, {"issues_found", "unavailable"})
+
+    def test_static_analyzer_builds_single_mypy_response_file_when_batches_would_split(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        changed_files = [_changed_file(f"src/module_{index}.py") for index in range(1201)]
+        response_file = ""
+
+        mypy_commands, cleanup_paths = analyzer._build_mypy_commands("/mypy", changed_files)
+
+        try:
+            self.assertEqual(len(mypy_commands), 1)
+            self.assertTrue(any(argument.startswith("@") for argument in mypy_commands[0][1:]))
+            response_file = next(argument[1:] for argument in mypy_commands[0][1:] if argument.startswith("@"))
+            self.assertTrue(Path(response_file).exists())
+        finally:
+            for cleanup_path in cleanup_paths:
+                cleanup_path.unlink(missing_ok=True)
+
         self.assertFalse(Path(response_file).exists())
 
     def test_static_analyzer_skips_compileall_for_shell_only_changes(self) -> None:

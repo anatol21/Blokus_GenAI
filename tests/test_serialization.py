@@ -111,6 +111,8 @@ class SerializationTests(unittest.TestCase):
         ).to_dict()
 
         self.assertEqual(set(payload.keys()), set(schema["required"]))
+        self.assertEqual(payload["verdict"], "NEEDS CHANGES")
+        self.assertIn(payload["verdict"], schema["properties"]["verdict"]["enum"])
 
         pr_schema = schema["properties"]["pr"]
         self.assertEqual(set(payload["pr"].keys()), set(pr_schema["required"]))

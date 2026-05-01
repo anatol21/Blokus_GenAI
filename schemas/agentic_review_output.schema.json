@@ -4,7 +4,7 @@
   "title": "Agentic Review Output",
   "type": "object",
   "additionalProperties": false,
-  "required": ["pr", "summary", "findings", "uncertain_risks"],
+  "required": ["pr", "summary", "findings", "uncertain_risks", "verdict"],
   "properties": {
     "pr": {
       "type": "object",
@@ -93,6 +93,9 @@
           "suggested_verification": { "type": "string" }
         }
       }
+    },
+    "verdict": {
+      "enum": ["LGTM", "DISCUSS", "NEEDS CHANGES"]
     }
   }
 }
