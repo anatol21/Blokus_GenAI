@@ -806,6 +806,48 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(render_patch_block.call_count, 2)
 
+    def test_coordinator_renders_only_needed_patch_blocks_when_bundle_truncates(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        changed_files = tuple(
+            _changed_file(
+                f"src/blokus/module_{index}.py",
+                line_start=1,
+                line_end=1,
+                patch="@@ -1,1 +1,1 @@\n-change\n+change\n",
+            )
+            for index in range(30)
+        )
+        context = _review_context(*changed_files, raw_diff="")
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        oversized_block = "File: demo.py\n```diff\n" + ("x" * 15_000) + "\n```"
+        with mock.patch(
+            "blokus.review.coordinator._render_patch_block",
+            return_value=(oversized_block, False),
+        ) as render_patch_block:
+            findings, uncertain_risks, truncated = coordinator._run_specialists(
+                cast(SpecialistRunner, FakeRunner()),
+                context,
+                [],
+                [],
+                performance_requested=False,
+            )
+
+        self.assertEqual(findings, [])
+        self.assertEqual(uncertain_risks, [])
+        self.assertTrue(truncated)
+        self.assertLess(render_patch_block.call_count, len(changed_files))
+
     def test_coordinator_bounds_rendered_diff_bundles_for_specialists(self) -> None:
         config = _make_config(REPO_ROOT)
         coordinator = ReviewCoordinator(config)

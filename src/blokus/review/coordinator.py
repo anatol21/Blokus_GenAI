@@ -43,6 +43,21 @@ class _RenderedDiffBundle:
     truncated: bool
 
 
+@dataclass
+class _RenderedBlockCache:
+    blocks: dict[str, tuple[str, bool]]
+
+    def __init__(self) -> None:
+        self.blocks = {}
+
+    def get(self, changed_file: ChangedFile) -> tuple[str, bool]:
+        block = self.blocks.get(changed_file.path)
+        if block is None:
+            block = _render_patch_block(changed_file)
+            self.blocks[changed_file.path] = block
+        return block
+
+
 class ReviewCoordinator:
     """Run the end-to-end agentic PR review flow."""
 
@@ -156,11 +171,7 @@ class ReviewCoordinator:
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk], bool]:
-        rendered_blocks = {
-            changed_file.path: _render_patch_block(changed_file)
-            for changed_file in context.changed_files
-            if changed_file.patch
-        }
+        rendered_blocks = _RenderedBlockCache()
         all_changed_diff = (
             _RenderedDiffBundle(text=context.raw_diff, truncated=False)
             if context.raw_diff
@@ -299,7 +310,7 @@ def _is_valid_finding(finding: Finding) -> bool:
 
 def _render_diff_bundle(
     files: tuple[ChangedFile, ...],
-    rendered_blocks: dict[str, tuple[str, bool]] | None = None,
+    rendered_blocks: _RenderedBlockCache | None = None,
 ) -> _RenderedDiffBundle:
     blocks: list[str] = []
     total_length = 0
@@ -309,7 +320,7 @@ def _render_diff_bundle(
         if rendered_blocks is None:
             block, block_truncated = _render_patch_block(changed_file)
         else:
-            block, block_truncated = rendered_blocks.get(changed_file.path, ("", False))
+            block, block_truncated = rendered_blocks.get(changed_file)
         if not block:
             continue
         separator = "\n\n" if blocks else ""
