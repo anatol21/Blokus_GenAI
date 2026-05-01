@@ -75,10 +75,8 @@ class StaticAnalyzer:
 
         if python_files:
             compileall_files = python_files
-            compileall_capped = False
             if len(python_files) > _MAX_COMPILEALL_FILES:
                 compileall_files = python_files[:_MAX_COMPILEALL_FILES]
-                compileall_capped = True
                 uncertain_risks.append(
                     UncertainRisk(
                         risk="Compileall was capped for a large change set.",

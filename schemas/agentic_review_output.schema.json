@@ -36,7 +36,7 @@
           "enum": ["low", "moderate", "high", "critical"]
         },
         "test_posture": {
-          "enum": ["adequate", "partial", "weak", "unknown"]
+          "enum": ["adequate", "partial", "weak", "unknown", "review_recommended"]
         },
         "static_analysis_posture": {
           "enum": ["clean", "issues_found", "not_run", "unavailable"]

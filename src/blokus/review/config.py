@@ -81,6 +81,12 @@ class ReviewConfig:
             )
         if self.provider.max_retries < 0:
             raise ValueError("Review provider `max_retries` must be greater than or equal to 0.")
+        if self.provider.timeout_seconds <= 0:
+            raise ValueError("Review provider `timeout_seconds` must be greater than 0.")
+        if not self.provider.base_url or not self.provider.base_url.strip():
+            raise ValueError("Review provider `base_url` must be non-empty.")
+        if not self.provider.base_url.startswith(("http://", "https://")):
+            raise ValueError("Review provider `base_url` must be a valid HTTP(S) URL.")
         if not self.models.get("default", "").strip():
             raise ValueError("Review config must define a non-empty `models.default` value.")
 

@@ -100,6 +100,12 @@ class _PatchAccumulator:
     stored_chars: int = 0
     patch_truncated: bool = False
     performance_sensitive: bool = False
+    _path_markers_checked: bool = field(default=False, repr=False)
+    _diff_marker_pattern: re.Pattern[str] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        # Pre-compile the diff marker regex once
+        self._diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
 
     def add_line(self, line: str) -> None:
         self.tracker.feed(line)
@@ -157,13 +163,16 @@ class _PatchAccumulator:
     def _track_performance(self, line: str) -> None:
         if self.performance_sensitive:
             return
-        diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
-        if diff_marker_pattern is not None and diff_marker_pattern.search(line):
+        # Check diff markers using pre-compiled pattern
+        if self._diff_marker_pattern is not None and self._diff_marker_pattern.search(line):
             self.performance_sensitive = True
             return
-        path = self.new_path or self.old_path
-        if path and any(marker in path for marker in self.config.performance.path_markers):
-            self.performance_sensitive = True
+        # Check path markers once when path is known
+        if not self._path_markers_checked:
+            path = self.new_path or self.old_path
+            if path and any(marker in path for marker in self.config.performance.path_markers):
+                self.performance_sensitive = True
+            self._path_markers_checked = True
 
     def _append_bounded(self, line: str) -> None:
         if self.patch_truncated:

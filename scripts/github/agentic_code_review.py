@@ -4,31 +4,30 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 from pathlib import Path
 import sys
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = REPO_ROOT / "src"
-for import_root in (str(SRC_ROOT), str(REPO_ROOT)):
-    if import_root not in sys.path:
-        sys.path.insert(0, import_root)
-
-_blokus_automation: Any = importlib.import_module("blokus.automation")
-COMMENT_MARKERS = _blokus_automation.COMMENT_MARKERS
-_review_config: Any = importlib.import_module("blokus.review.config")
-load_review_config = _review_config.load_review_config
-_review_coordinator: Any = importlib.import_module("blokus.review.coordinator")
-ReviewCoordinator = _review_coordinator.ReviewCoordinator
-_gh_helpers: Any = importlib.import_module("scripts.github.gh_helpers")
-GitHubClient = _gh_helpers.GitHubClient
-load_event_payload = _gh_helpers.load_event_payload
-
 
 def main() -> int:
+    """Main entry point - sets up import path and runs review."""
+    # Set up import path first
+    _setup_import_path()
+    
+    # Now import the modules that depend on the custom path
+    import blokus.automation as _blokus_automation
+    import blokus.review.config as _review_config
+    import blokus.review.coordinator as _review_coordinator
+    import scripts.github.gh_helpers as _gh_helpers
+    
+    COMMENT_MARKERS = _blokus_automation.COMMENT_MARKERS
+    load_review_config = _review_config.load_review_config
+    ReviewCoordinator = _review_coordinator.ReviewCoordinator
+    GitHubClient = _gh_helpers.GitHubClient
+    load_event_payload = _gh_helpers.load_event_payload
+    
     args = _parse_args()
     repo_root = _resolve_repo_root()
     config = load_review_config(repo_root=repo_root)
@@ -66,6 +65,18 @@ def main() -> int:
 
     print(run.markdown)
     return 0 if run.result.verdict == "LGTM" else 1
+
+
+def _setup_import_path() -> None:
+    """Add repository paths to sys.path for imports.
+    
+    This is called from main() to avoid side effects at import time.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    src_root = repo_root / "src"
+    for import_root in (str(src_root), str(repo_root)):
+        if import_root not in sys.path:
+            sys.path.insert(0, import_root)
 
 
 def _parse_args() -> argparse.Namespace:
