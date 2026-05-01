@@ -13,6 +13,9 @@ except ImportError:
     import tomli as tomllib  # type: ignore  # Python <3.11 fallback
 
 
+MAX_PROVIDER_RETRIES = 5
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """Provider runtime configuration."""
@@ -86,6 +89,10 @@ class ReviewConfig:
             )
         if self.provider.max_retries < 0:
             raise ValueError("Review provider `max_retries` must be greater than or equal to 0.")
+        if self.provider.max_retries > MAX_PROVIDER_RETRIES:
+            raise ValueError(
+                f"Review provider `max_retries` must be less than or equal to {MAX_PROVIDER_RETRIES}."
+            )
         if self.provider.timeout_seconds <= 0:
             raise ValueError("Review provider `timeout_seconds` must be greater than 0.")
         if not self.provider.base_url or not self.provider.base_url.strip():
@@ -141,7 +148,7 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
                 serialization_paths=_coerce_str_list(heuristics_block["serialization_paths"], "heuristics.serialization_paths", config_path),
                 dependency_files=_coerce_str_list(heuristics_block["dependency_files"], "heuristics.dependency_files", config_path),
             ),
-            models={str(key): str(value) for key, value in models_block.items()},
+            models=_coerce_models_block(models_block, "models", config_path),
         )
     except KeyError as exc:
         raise ValueError(
@@ -185,3 +192,24 @@ def _coerce_str_list(value: object, field_name: str, config_path: Path) -> tuple
         f"Config field `{field_name}` must be a list of strings or a single string, "
         f"got {type(value).__name__}."
     )
+
+
+def _coerce_models_block(value: object, field_name: str, config_path: Path) -> dict[str, str]:
+    del config_path
+    if not isinstance(value, dict):
+        raise ValueError(f"Config field `{field_name}` must be a table of string model identifiers.")
+
+    coerced: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        if not isinstance(raw_key, str) or not raw_key.strip():
+            raise ValueError(f"Config field `{field_name}` contains an invalid model key.")
+        if not isinstance(raw_value, str):
+            raise ValueError(
+                f"Config field `{field_name}.{raw_key}` must be a string model identifier, "
+                f"got {type(raw_value).__name__}."
+            )
+        normalized = raw_value.strip()
+        if not normalized:
+            raise ValueError(f"Config field `{field_name}.{raw_key}` must not be blank.")
+        coerced[raw_key.strip()] = normalized
+    return coerced

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from blokus.review.config import ReviewConfig
+from blokus.review.config import MAX_PROVIDER_RETRIES, ReviewConfig
 
 
 _MAX_OPENROUTER_RESPONSE_BYTES = 1_000_000
@@ -43,6 +43,10 @@ class OpenRouterClient:
     def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
         if self.max_retries < 0:
             raise ProviderUnavailable("OpenRouter `max_retries` must be greater than or equal to 0.")
+        if self.max_retries > MAX_PROVIDER_RETRIES:
+            raise ProviderUnavailable(
+                f"OpenRouter `max_retries` must be less than or equal to {MAX_PROVIDER_RETRIES}."
+            )
         payload = {
             "model": model,
             "temperature": 0,

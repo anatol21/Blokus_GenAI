@@ -49,19 +49,23 @@ class SpecialistRunner:
             return SpecialistResponse(findings=(), note="No relevant files were available for this specialist.")
 
         try:
-            system_prompt = f"{self._common_prompt}\n\n{self._specialist_prompt(specialist)}"
+            common_prompt = self._common_prompt
         except FileNotFoundError:
-            return SpecialistResponse(
-                findings=(),
-                uncertain_risks=(
-                    UncertainRisk(
-                        risk="A specialist prompt asset was unavailable.",
-                        reason_uncertain=f"The `{specialist}` specialist prompt could not be loaded from the configured prompt directory.",
-                        suggested_verification=f"Restore `.github/prompts/review-{specialist}.md` or update the configured prompt path before rerunning the review.",
-                    ),
-                ),
-                note=f"Prompt asset missing for specialist `{specialist}`.",
+            return _missing_prompt_response(
+                prompt_name="review-common",
+                specialist=specialist,
+                shared=True,
             )
+
+        try:
+            specialist_prompt = self._specialist_prompt(specialist)
+        except FileNotFoundError:
+            return _missing_prompt_response(
+                prompt_name=f"review-{specialist}",
+                specialist=specialist,
+                shared=False,
+            )
+        system_prompt = f"{common_prompt}\n\n{specialist_prompt}"
         user_prompt = _build_user_prompt(specialist, context, files, rendered_diff)
         raw_response = self.provider.complete(
             model=self.config.model_for(specialist),
@@ -290,6 +294,40 @@ def _normalize_confidence(value: object) -> str:
 
 def _normalize_category(value: object) -> str:
     return str(value).strip().lower().replace("_", "-").replace(" ", "-")
+
+
+def _missing_prompt_response(*, prompt_name: str, specialist: str, shared: bool) -> SpecialistResponse:
+    if shared:
+        risk = "The shared review prompt asset was unavailable."
+        reason_uncertain = (
+            f"The shared `{prompt_name}` prompt could not be loaded from the configured prompt directory, "
+            f"so the `{specialist}` specialist could not be prepared."
+        )
+        suggested_verification = (
+            "Restore `.github/prompts/review-common.md` or update the configured prompt path before rerunning the review."
+        )
+        note = "Prompt asset missing for `review-common`."
+    else:
+        risk = "A specialist prompt asset was unavailable."
+        reason_uncertain = (
+            f"The `{specialist}` specialist prompt could not be loaded from the configured prompt directory."
+        )
+        suggested_verification = (
+            f"Restore `.github/prompts/{prompt_name}.md` or update the configured prompt path before rerunning the review."
+        )
+        note = f"Prompt asset missing for specialist `{specialist}`."
+
+    return SpecialistResponse(
+        findings=(),
+        uncertain_risks=(
+            UncertainRisk(
+                risk=risk,
+                reason_uncertain=reason_uncertain,
+                suggested_verification=suggested_verification,
+            ),
+        ),
+        note=note,
+    )
 
 
 def _load_json_object(raw_response: str) -> dict[str, object]:

@@ -128,6 +128,21 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertIn(repo_root, sys.path)
             self.assertIn(src_root, sys.path)
 
+    def test_main_raises_when_lazy_imports_remain_uninitialized(self) -> None:
+        with mock.patch.object(
+            agentic_code_review,
+            "_lazy_imports",
+        ), mock.patch.multiple(
+            agentic_code_review,
+            load_review_config=None,
+            ReviewCoordinator=object,
+            GitHubClient=object,
+            load_event_payload=object,
+            COMMENT_MARKERS={"agentic_review": "agentic-code-review"},
+        ):
+            with self.assertRaisesRegex(RuntimeError, "load_review_config"):
+                agentic_code_review.main()
+
     def test_main_loads_event_payload_and_forwards_it_to_coordinator(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=False, verdict="LGTM")
@@ -229,6 +244,45 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             agentic_code_review,
             "load_event_payload",
             side_effect=ValueError("bad payload"),
+        ) as load_event_payload, mock.patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": str(Path(tmpdir) / "event.json")},
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            Path(tmpdir, "event.json").write_text("{}", encoding="utf-8")
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            load_event_payload.assert_called_once_with(str(Path(tmpdir) / "event.json"))
+            self.assertIsNone(coordinator_cls.return_value.run.call_args.kwargs["event_payload"])
+
+    def test_main_ignores_non_object_event_payloads(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "load_event_payload",
+            return_value=["unexpected"],
         ) as load_event_payload, mock.patch.dict(
             os.environ,
             {"GITHUB_EVENT_PATH": str(Path(tmpdir) / "event.json")},

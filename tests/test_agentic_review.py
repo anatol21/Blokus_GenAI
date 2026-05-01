@@ -16,7 +16,7 @@ import blokus.review.coordinator as review_coordinator
 import blokus.review.diff as review_diff
 import blokus.review.renderer as review_renderer
 import blokus.review.static_analyzer as review_static_analyzer
-from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
+from blokus.review.config import MAX_PROVIDER_RETRIES, HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
@@ -196,6 +196,17 @@ class AgenticReviewTests(unittest.TestCase):
         ))
 
         with self.assertRaisesRegex(ValueError, "max_retries"):
+            config.validate_provider()
+
+    def test_validate_provider_rejects_excessive_retry_budget(self) -> None:
+        config = replace(_make_config(REPO_ROOT), provider=ProviderConfig(
+            name="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            timeout_seconds=30,
+            max_retries=MAX_PROVIDER_RETRIES + 1,
+        ))
+
+        with self.assertRaisesRegex(ValueError, "less than or equal to"):
             config.validate_provider()
 
     def test_model_for_requires_default_model(self) -> None:
@@ -999,6 +1010,27 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.findings, ())
         self.assertEqual(len(response.uncertain_risks), 1)
         self.assertIn("prompt asset", response.uncertain_risks[0].risk.lower())
+        provider.complete.assert_not_called()
+
+    def test_specialist_runner_reports_missing_shared_prompt_as_uncertain_risk(self) -> None:
+        config = _make_config(REPO_ROOT)
+        provider = mock.Mock()
+        runner = SpecialistRunner(config, cast(OpenRouterClient, provider))
+        context = _review_context(_changed_file("src/blokus/engine.py"))
+
+        def fake_load_prompt(config: ReviewConfig, name: str) -> str:
+            del config
+            if name == "review-common":
+                raise FileNotFoundError(name)
+            return f"prompt:{name}"
+
+        with mock.patch("blokus.review.specialists.load_prompt", side_effect=fake_load_prompt):
+            response = runner.run("tests", context, context.executable_files, "diff")
+
+        self.assertEqual(response.findings, ())
+        self.assertEqual(len(response.uncertain_risks), 1)
+        self.assertIn("shared review prompt", response.uncertain_risks[0].risk.lower())
+        self.assertIn("review-common", response.note)
         provider.complete.assert_not_called()
 
     def test_specialist_response_ignores_incomplete_findings(self) -> None:
@@ -2982,6 +3014,17 @@ class AgenticReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(ProviderUnavailable, "max_retries"):
             client.complete(model="gpt", system_prompt="sys", user_prompt="user")
 
+    def test_openrouter_client_rejects_excessive_retry_budget(self) -> None:
+        client = OpenRouterClient(
+            api_key="token",
+            base_url="https://openrouter.example",
+            timeout_seconds=30,
+            max_retries=MAX_PROVIDER_RETRIES + 1,
+        )
+
+        with self.assertRaisesRegex(ProviderUnavailable, "less than or equal to"):
+            client.complete(model="gpt", system_prompt="sys", user_prompt="user")
+
     def test_diff_module_imports_cleanly_in_subprocess(self) -> None:
         result = subprocess.run(
             [sys.executable, "-c", "import blokus.review.diff"],
@@ -3330,6 +3373,43 @@ default = "default-model"
             (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "excluded_globs.*index 0.*string"):
+                load_review_config(repo_root=repo_root)
+
+    def test_config_rejects_non_string_model_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".github").mkdir()
+            config_text = """
+max_findings = 5
+excluded_globs = ["*.md"]
+blocking_severities = ["critical", "high"]
+prompt_dir = ".github/prompts"
+spec_path = "docs/spec.md"
+schema_path = "schemas/schema.json"
+
+[provider]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+timeout_seconds = 30
+max_retries = 2
+
+[performance]
+path_markers = ["src/engine.py"]
+diff_markers = ["for ", "while "]
+
+[heuristics]
+schema_test_paths = ["tests/test_serialization.py"]
+fixture_test_paths = ["tests/test_serialization.py"]
+cli_test_paths = ["tests/test_cli.py"]
+serialization_paths = ["src/models.py"]
+dependency_files = ["pyproject.toml"]
+
+[models]
+default = 123
+"""
+            (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "models.default.*string model identifier"):
                 load_review_config(repo_root=repo_root)
 
 

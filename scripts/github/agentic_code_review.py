@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,19 +34,20 @@ def main() -> int:
     # Lazy-load dependencies to avoid import-time side effects
     _lazy_imports()
 
-    # Asserts inform mypy that lazy imports have been initialized
-    assert load_review_config is not None
-    assert ReviewCoordinator is not None
-    assert GitHubClient is not None
-    assert load_event_payload is not None
-    assert COMMENT_MARKERS is not None
+    (
+        load_review_config_fn,
+        coordinator_cls,
+        github_client_cls,
+        load_event_payload_fn,
+        comment_markers,
+    ) = _initialized_lazy_imports()
 
     args = _parse_args()
     repo_root = _resolve_repo_root()
-    config = load_review_config(repo_root=repo_root)
-    coordinator = ReviewCoordinator(config)
+    config = load_review_config_fn(repo_root=repo_root)
+    coordinator = coordinator_cls(config)
 
-    event_payload = _load_event_payload_if_available()
+    event_payload = _load_event_payload_if_available(load_event_payload_fn)
 
     run = coordinator.run(
         event_payload=event_payload,
@@ -66,10 +67,10 @@ def main() -> int:
         repository = os.environ.get("GITHUB_REPOSITORY")
         token = os.environ.get("GITHUB_TOKEN")
         if repository and token:
-            client = GitHubClient(repository, token)
+            client = github_client_cls(repository, token)
             client.upsert_issue_comment(
                 run.context.pr.number,
-                COMMENT_MARKERS["agentic_review"],
+                comment_markers["agentic_review"],
                 run.markdown,
             )
 
@@ -108,6 +109,37 @@ def _lazy_imports() -> None:
         import blokus.automation as auto
 
         COMMENT_MARKERS = auto.COMMENT_MARKERS
+
+
+def _initialized_lazy_imports() -> tuple[
+    "Callable[..., Any]",
+    "Type[Any]",
+    "Type[Any]",
+    "Callable[..., Any]",
+    dict[str, str],
+]:
+    missing: list[str] = []
+    if load_review_config is None:
+        missing.append("load_review_config")
+    if ReviewCoordinator is None:
+        missing.append("ReviewCoordinator")
+    if GitHubClient is None:
+        missing.append("GitHubClient")
+    if load_event_payload is None:
+        missing.append("load_event_payload")
+    if COMMENT_MARKERS is None:
+        missing.append("COMMENT_MARKERS")
+    if missing:
+        missing_list = ", ".join(missing)
+        raise RuntimeError(f"Lazy imports were not initialized: {missing_list}.")
+
+    return (
+        cast("Callable[..., Any]", load_review_config),
+        cast("Type[Any]", ReviewCoordinator),
+        cast("Type[Any]", GitHubClient),
+        cast("Callable[..., Any]", load_event_payload),
+        cast(dict[str, str], COMMENT_MARKERS),
+    )
 
 
 def _setup_import_path() -> None:
@@ -150,9 +182,9 @@ def _env_int(name: str) -> int | None:
         return None
 
 
-def _load_event_payload_if_available() -> dict[str, object] | None:
-    assert load_event_payload is not None
-
+def _load_event_payload_if_available(
+    load_event_payload_fn: "Callable[..., Any]",
+) -> dict[str, object] | None:
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if not event_path:
         return None
@@ -162,13 +194,20 @@ def _load_event_payload_if_available() -> dict[str, object] | None:
         return None
 
     try:
-        return load_event_payload(event_path)
+        payload = load_event_payload_fn(event_path)
     except (OSError, ValueError) as exc:
         print(
             f"Warning: failed to load GitHub event payload from `{event_path}`: {exc}",
             file=sys.stderr,
         )
         return None
+    if not isinstance(payload, dict):
+        print(
+            f"Warning: GitHub event payload at `{event_path}` did not contain a JSON object.",
+            file=sys.stderr,
+        )
+        return None
+    return payload
 
 
 def _resolve_repo_root() -> Path:
