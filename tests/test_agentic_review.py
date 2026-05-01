@@ -20,7 +20,14 @@ from blokus.review.config import MAX_PROVIDER_RETRIES, HeuristicConfig, Performa
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
-from blokus.review.specialists import MAX_PROMPT_FILES, SpecialistRunner, _build_prompt_context_blocks, _parse_specialist_response
+from blokus.review.specialists import (
+    MAX_PROMPT_FILES,
+    MAX_UNMATCHED_PATH_UNCERTAIN_RISKS,
+    SpecialistRunner,
+    _build_prompt_context_blocks,
+    _load_json_object,
+    _parse_specialist_response,
+)
 from blokus.review.static_analyzer import StaticAnalysisReport, StaticAnalyzer, ToolRun
 from blokus.review.types import ChangedFile, Finding, LineSpan, ReviewContext, ReviewPayload, ReviewResult, ReviewSummary, SpecialistResponse, UncertainRisk
 
@@ -429,7 +436,35 @@ class AgenticReviewTests(unittest.TestCase):
 
                 self.assertTrue(block.patch_truncated)
                 self.assertTrue(block.analysis_truncated)
-                self.assertEqual(wrapped_feed.call_count, 5)
+                self.assertEqual(wrapped_feed.call_count, 8)
+
+    def test_patch_accumulator_tracks_performance_markers_after_truncation_caps_trip(self) -> None:
+        config = _make_config(REPO_ROOT)
+
+        with mock.patch.object(review_diff, "MAX_ANALYZED_PATCH_LINES", 4), mock.patch.object(
+            review_diff,
+            "MAX_ANALYZED_PATCH_CHARS",
+            10_000,
+        ), mock.patch.object(review_diff, "MAX_STORED_PATCH_CHARS", 90):
+            accumulator = review_diff._PatchAccumulator(config)
+            for line in (
+                "diff --git a/src/demo.py b/src/demo.py",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -0,0 +1,6 @@",
+                "+line 1",
+                "+line 2",
+                "+line 3",
+                "+line 4",
+                "+cache lookup result",
+            ):
+                accumulator.add_line(line)
+
+        block = cast(review_diff._PatchBlock, accumulator.build())
+
+        self.assertTrue(block.patch_truncated)
+        self.assertTrue(block.analysis_truncated)
+        self.assertTrue(block.performance_sensitive)
 
     def test_patch_accumulator_caps_post_truncation_analysis_window(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -825,6 +860,44 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.findings, ())
         self.assertEqual(response.uncertain_risks, ())
         self.assertEqual(response.note, "Specialist returned non-object JSON.")
+
+    def test_load_json_object_accepts_valid_object_payload(self) -> None:
+        data = _load_json_object('{"findings": [], "uncertain_risks": [], "note": "ok"}')
+
+        self.assertEqual(data.get("note"), "ok")
+        self.assertEqual(data.get("findings"), [])
+
+    def test_specialist_response_caps_unmatched_path_risks(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        payload = json.dumps(
+            {
+                "findings": [
+                    {
+                        "title": f"Unmatched {index}",
+                        "severity": "moderate",
+                        "confidence": "high",
+                        "category": "correctness",
+                        "file": f"src/missing_{index}.py",
+                        "line_start": 1,
+                        "line_end": 1,
+                        "evidence": "Path is not in changed files.",
+                        "impact": "Should create an unmatched-path uncertain risk.",
+                        "suggested_action": "Normalize the path.",
+                        "blocking_recommendation": False,
+                    }
+                    for index in range(MAX_UNMATCHED_PATH_UNCERTAIN_RISKS + 5)
+                ]
+            }
+        )
+
+        response = _parse_specialist_response(payload, "correctness", files)
+
+        self.assertEqual(response.findings, ())
+        self.assertEqual(len(response.uncertain_risks), MAX_UNMATCHED_PATH_UNCERTAIN_RISKS + 1)
+        self.assertEqual(
+            response.uncertain_risks[-1].risk,
+            "Additional unmatched specialist paths were omitted for scale.",
+        )
 
     def test_specialist_response_handles_invalid_embedded_json(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)

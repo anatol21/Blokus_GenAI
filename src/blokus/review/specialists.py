@@ -17,6 +17,7 @@ MAX_PROMPT_FILES = 80
 MAX_PROMPT_COMMITS = 25
 MAX_SPECIALIST_FINDINGS = 3
 MAX_SPECIALIST_FINDINGS_TO_INSPECT = 100
+MAX_UNMATCHED_PATH_UNCERTAIN_RISKS = 10
 
 
 @dataclass(frozen=True)
@@ -212,12 +213,26 @@ def _parse_specialist_response(
         if len(findings) >= MAX_SPECIALIST_FINDINGS:
             break
 
-    for unmatched_path in sorted(unmatched_paths):
+    sorted_unmatched_paths = sorted(unmatched_paths)
+    for unmatched_path in sorted_unmatched_paths[:MAX_UNMATCHED_PATH_UNCERTAIN_RISKS]:
         uncertain_risks.append(
             UncertainRisk(
                 risk="Specialist findings were discarded because their file path did not match the current diff.",
                 reason_uncertain=f"The specialist referenced `{unmatched_path}`, which could not be reconciled to a changed file path or rename target.",
                 suggested_verification="Inspect the specialist output and normalize the referenced path if the finding should apply to a changed file.",
+            )
+        )
+
+    if len(sorted_unmatched_paths) > MAX_UNMATCHED_PATH_UNCERTAIN_RISKS:
+        omitted = len(sorted_unmatched_paths) - MAX_UNMATCHED_PATH_UNCERTAIN_RISKS
+        uncertain_risks.append(
+            UncertainRisk(
+                risk="Additional unmatched specialist paths were omitted for scale.",
+                reason_uncertain=(
+                    f"{omitted} additional unmatched specialist paths were omitted after capping at "
+                    f"{MAX_UNMATCHED_PATH_UNCERTAIN_RISKS}."
+                ),
+                suggested_verification="Inspect the raw specialist output if omitted unmatched paths may matter.",
             )
         )
 
