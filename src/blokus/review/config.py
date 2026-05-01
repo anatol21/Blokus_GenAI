@@ -108,8 +108,8 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
         config = ReviewConfig(
             repo_root=root,
             max_findings=int(raw["max_findings"]),
-            excluded_globs=tuple(raw["excluded_globs"]),
-            blocking_severities=tuple(raw["blocking_severities"]),
+            excluded_globs=_coerce_str_list(raw["excluded_globs"], "excluded_globs", config_path),
+            blocking_severities=_coerce_str_list(raw["blocking_severities"], "blocking_severities", config_path),
             prompt_dir=root / raw["prompt_dir"],
             spec_path=root / raw["spec_path"],
             schema_path=root / raw["schema_path"],
@@ -120,15 +120,15 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
                 max_retries=int(provider_block["max_retries"]),
             ),
             performance=PerformanceConfig(
-                path_markers=tuple(performance_block["path_markers"]),
-                diff_markers=tuple(performance_block["diff_markers"]),
+                path_markers=_coerce_str_list(performance_block["path_markers"], "performance.path_markers", config_path),
+                diff_markers=_coerce_str_list(performance_block["diff_markers"], "performance.diff_markers", config_path),
             ),
             heuristics=HeuristicConfig(
-                schema_test_paths=tuple(heuristics_block["schema_test_paths"]),
-                fixture_test_paths=tuple(heuristics_block["fixture_test_paths"]),
-                cli_test_paths=tuple(heuristics_block["cli_test_paths"]),
-                serialization_paths=tuple(heuristics_block["serialization_paths"]),
-                dependency_files=tuple(heuristics_block["dependency_files"]),
+                schema_test_paths=_coerce_str_list(heuristics_block["schema_test_paths"], "heuristics.schema_test_paths", config_path),
+                fixture_test_paths=_coerce_str_list(heuristics_block["fixture_test_paths"], "heuristics.fixture_test_paths", config_path),
+                cli_test_paths=_coerce_str_list(heuristics_block["cli_test_paths"], "heuristics.cli_test_paths", config_path),
+                serialization_paths=_coerce_str_list(heuristics_block["serialization_paths"], "heuristics.serialization_paths", config_path),
+                dependency_files=_coerce_str_list(heuristics_block["dependency_files"], "heuristics.dependency_files", config_path),
             ),
             models={str(key): str(value) for key, value in models_block.items()},
         )
@@ -144,3 +144,26 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
 
 def _normalized_env_value(name: str) -> str:
     return (os.environ.get(name) or "").strip()
+
+
+def _coerce_str_list(value: object, field_name: str, config_path: Path) -> tuple[str, ...]:
+    """Coerce a value to a tuple of strings.
+    
+    Handles lists of strings (normal case) and single strings (coerced to single-item list).
+    Raises ValueError for invalid types.
+    """
+    if isinstance(value, list):
+        return tuple(str(item) for item in value)
+    if isinstance(value, str):
+        import warnings
+        warnings.warn(
+            f"Config field `{field_name}` should be a list, not a string. "
+            f"Coercing '{value}' to ['{value}'].",
+            UserWarning,
+            stacklevel=3,
+        )
+        return (value,)
+    raise ValueError(
+        f"Config field `{field_name}` must be a list of strings or a single string, "
+        f"got {type(value).__name__}."
+    )

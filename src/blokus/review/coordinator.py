@@ -173,7 +173,10 @@ class ReviewCoordinator:
     ) -> tuple[list[Finding], list[UncertainRisk], bool]:
         rendered_blocks = _RenderedBlockCache()
         all_changed_diff = (
-            _RenderedDiffBundle(text=context.raw_diff, truncated=False)
+            _RenderedDiffBundle(
+                text=_truncate_text(context.raw_diff, MAX_RENDERED_DIFF_CHARS, _RENDERED_BUNDLE_TRUNCATION_MARKER),
+                truncated=len(context.raw_diff) > MAX_RENDERED_DIFF_CHARS,
+            )
             if context.raw_diff
             else _render_diff_bundle(context.changed_files, rendered_blocks)
         )
@@ -269,7 +272,7 @@ class ReviewCoordinator:
         if test_findings:
             test_posture = "weak" if any(finding.blocking_recommendation for finding in test_findings) else "partial"
         elif any(changed_file.path.startswith(("src/", "schemas/", "fixtures/")) for changed_file in context.changed_files):
-            test_posture = "adequate"
+            test_posture = "review_recommended"
         else:
             test_posture = "unknown"
 

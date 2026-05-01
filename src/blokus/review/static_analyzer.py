@@ -26,6 +26,7 @@ _MAX_TOOL_BATCH_FILES = 1000
 _MAX_TOOL_BATCH_CHARS = 65_536
 _MAX_JSON_TOOL_OUTPUT_CHARS = 1_000_000
 _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES = 400
+_MAX_COMPILEALL_FILES = 100
 
 
 @dataclass(frozen=True)
@@ -73,9 +74,24 @@ class StaticAnalyzer:
         skip_expensive_python_tools = len(python_files) > _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES
 
         if python_files:
+            compileall_files = python_files
+            compileall_capped = False
+            if len(python_files) > _MAX_COMPILEALL_FILES:
+                compileall_files = python_files[:_MAX_COMPILEALL_FILES]
+                compileall_capped = True
+                uncertain_risks.append(
+                    UncertainRisk(
+                        risk="Compileall was capped for a large change set.",
+                        reason_uncertain=(
+                            f"The diff touched {len(python_files)} Python files, which exceeds the bounded review limit "
+                            f"of {_MAX_COMPILEALL_FILES} files for compileall. Only the first {_MAX_COMPILEALL_FILES} files were checked."
+                        ),
+                        suggested_verification="Run `python -m compileall` manually for the full change set or split the change into smaller PRs.",
+                    )
+                )
             for compileall_args in _build_tool_batches(
                 [sys.executable, "-m", "compileall"],
-                python_files,
+                compileall_files,
             ):
                 compileall_run = self._run_command(compileall_args)
                 commands.append(compileall_run.command)

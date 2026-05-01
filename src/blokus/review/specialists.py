@@ -191,7 +191,7 @@ def _parse_specialist_response(
                 evidence=str(item["evidence"]),
                 impact=str(item["impact"]),
                 suggested_action=str(item["suggested_action"]),
-                blocking_recommendation=bool(item["blocking_recommendation"]),
+                blocking_recommendation=_parse_blocking_recommendation(item["blocking_recommendation"]),
                 source=specialist,
             )
         )
@@ -234,6 +234,18 @@ def _int_value(value: object) -> int | None:
         return int(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _parse_blocking_recommendation(value: object) -> bool:
+    """Parse blocking_recommendation field safely.
+    
+    Handles JSON booleans, strings ("true"/"false"), and defaults to False.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower().strip() == "true"
+    return False
 
 
 def _load_json_object(raw_response: str) -> dict[str, object]:

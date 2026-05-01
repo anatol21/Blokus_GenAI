@@ -2377,6 +2377,276 @@ class AgenticReviewTests(unittest.TestCase):
         completed = subprocess.run(["git", *args], cwd=repo_root, check=True, capture_output=True, text=True)
         return completed.stdout.strip()
 
+    # Tests for PR #44 fixes
+    def test_blocking_recommendation_parses_string_false_correctly(self) -> None:
+        """String 'false' should not be treated as truthy."""
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "String false test",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "Test",
+                            "impact": "Test",
+                            "suggested_action": "Test",
+                            "blocking_recommendation": "false",
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertFalse(response.findings[0].blocking_recommendation)
+
+    def test_blocking_recommendation_parses_string_true_correctly(self) -> None:
+        """String 'true' should be treated as truthy."""
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "String true test",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "Test",
+                            "impact": "Test",
+                            "suggested_action": "Test",
+                            "blocking_recommendation": "true",
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertTrue(response.findings[0].blocking_recommendation)
+
+    def test_blocking_recommendation_defaults_to_false_for_invalid(self) -> None:
+        """Invalid values should default to False."""
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Invalid value test",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "Test",
+                            "impact": "Test",
+                            "suggested_action": "Test",
+                            "blocking_recommendation": 123,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertFalse(response.findings[0].blocking_recommendation)
+
+    def test_compileall_capped_for_large_change_set(self) -> None:
+        """Compileall should be capped to 100 files when >400 files."""
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+        # Create 401 files to trigger capping
+        context = _review_context(*[_changed_file(f"src/module_{index}.py") for index in range(401)])
+        commands: list[list[str]] = []
+
+        def fake_run(args: list[str]) -> ToolRun:
+            commands.append(args)
+            return ToolRun(command=" ".join(args), returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(
+            analyzer,
+            "_discover_tool",
+            side_effect=lambda name: f"/{name}",
+        ), mock.patch.object(
+            analyzer,
+            "_run_command",
+            side_effect=fake_run,
+        ):
+            report = analyzer.analyze(context)
+
+        # Should only run compileall on first 100 files
+        compileall_commands = [cmd for cmd in commands if "compileall" in cmd]
+        self.assertEqual(len(compileall_commands), 1)
+        # Check that only 100 files were passed to compileall
+        self.assertEqual(len(compileall_commands[0]) - 3, 100)  # -3 for python, -m, compileall
+        # Check that uncertain risk was added
+        self.assertTrue(
+            any("Compileall was capped" in risk.risk for risk in report.uncertain_risks)
+        )
+
+    def test_test_posture_is_review_recommended_when_src_changed_no_tests(self) -> None:
+        """Test posture should be 'review_recommended' not 'adequate' when src/ changes without tests."""
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
+
+        summary = coordinator._build_summary(context, [], static_report, False, True)
+
+        self.assertEqual(summary.test_posture, "review_recommended")
+
+    def test_test_posture_is_adequate_when_tests_changed(self) -> None:
+        """Test posture should be 'adequate' when tests are changed."""
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        # Change a test file
+        context = _review_context(_changed_file("tests/test_engine.py", line_start=12, line_end=12))
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
+
+        summary = coordinator._build_summary(context, [], static_report, False, True)
+
+        self.assertEqual(summary.test_posture, "unknown")
+
+    def test_raw_diff_truncated_when_too_large(self) -> None:
+        """Raw diff should be truncated when it exceeds MAX_RENDERED_DIFF_CHARS."""
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        # Create a huge raw_diff
+        huge_diff = "x" * (review_coordinator.MAX_RENDERED_DIFF_CHARS + 1000)
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=1, line_end=1),
+            raw_diff=huge_diff,
+        )
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                # Check that the diff was truncated
+                self.captured_diff = rendered_diff
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        fake_runner = FakeRunner()
+        coordinator._run_specialists(
+            cast(SpecialistRunner, fake_runner),
+            context,
+            [],
+            [],
+            performance_requested=False,
+        )
+
+        # Diff should be truncated to MAX_RENDERED_DIFF_CHARS
+        self.assertLessEqual(len(fake_runner.captured_diff), review_coordinator.MAX_RENDERED_DIFF_CHARS)
+        self.assertIn("truncated for scale", fake_runner.captured_diff)
+
+    def test_config_coerces_string_to_list(self) -> None:
+        """Config should coerce string values to single-item lists."""
+        import warnings
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".github").mkdir()
+            config_text = """
+max_findings = 5
+excluded_globs = "*.md"
+blocking_severities = ["critical", "high"]
+prompt_dir = ".github/prompts"
+spec_path = "docs/spec.md"
+schema_path = "schemas/schema.json"
+
+[provider]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+timeout_seconds = 30
+max_retries = 2
+
+[performance]
+path_markers = "src/engine.py"
+diff_markers = ["for ", "while "]
+
+[heuristics]
+schema_test_paths = ["tests/test_serialization.py"]
+fixture_test_paths = ["tests/test_serialization.py"]
+cli_test_paths = ["tests/test_cli.py"]
+serialization_paths = ["src/models.py"]
+dependency_files = ["pyproject.toml"]
+
+[models]
+default = "default-model"
+"""
+            (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                config = load_review_config(repo_root=repo_root)
+
+                # Check that string was coerced to tuple
+                self.assertEqual(config.excluded_globs, ("*.md",))
+                self.assertEqual(config.performance.path_markers, ("src/engine.py",))
+
+                # Check that warning was issued
+                self.assertTrue(
+                    any("excluded_globs" in str(warning.message) for warning in w)
+                )
+
+    def test_config_rejects_invalid_types(self) -> None:
+        """Config should reject non-string, non-list values."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / ".github").mkdir()
+            config_text = """
+max_findings = 5
+excluded_globs = 123
+blocking_severities = ["critical", "high"]
+prompt_dir = ".github/prompts"
+spec_path = "docs/spec.md"
+schema_path = "schemas/schema.json"
+
+[provider]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+timeout_seconds = 30
+max_retries = 2
+
+[performance]
+path_markers = ["src/engine.py"]
+diff_markers = ["for ", "while "]
+
+[heuristics]
+schema_test_paths = ["tests/test_serialization.py"]
+fixture_test_paths = ["tests/test_serialization.py"]
+cli_test_paths = ["tests/test_cli.py"]
+serialization_paths = ["src/models.py"]
+dependency_files = ["pyproject.toml"]
+
+[models]
+default = "default-model"
+"""
+            (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "excluded_globs.*must be a list"):
+                load_review_config(repo_root=repo_root)
+
 
 if __name__ == "__main__":
     unittest.main()
