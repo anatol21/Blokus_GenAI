@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import os
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    import tomli as tomllib  # type: ignore  # Python <3.11 fallback
 
 
 @dataclass(frozen=True)

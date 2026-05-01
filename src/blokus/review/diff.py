@@ -108,16 +108,13 @@ class _PatchAccumulator:
         self._diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
 
     def add_line(self, line: str) -> None:
-        # Fast-path: if patch is already truncated, only track file boundaries
-        if self.patch_truncated:
-            # Still need to track paths to detect file boundaries for the next file
-            self._track_paths(line)
-            return
-        
+        # Always track spans and performance markers, even after patch storage truncation
         self.tracker.feed(line)
         self._track_paths(line)
         self._track_performance(line)
-        self._append_bounded(line)
+        # Only skip bounded storage append once truncated
+        if not self.patch_truncated:
+            self._append_bounded(line)
 
     def build(self) -> _PatchBlock | None:
         path = self.new_path if self.new_path and self.new_path != "/dev/null" else self.old_path

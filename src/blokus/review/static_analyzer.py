@@ -27,6 +27,7 @@ _MAX_TOOL_BATCH_CHARS = 65_536
 _MAX_JSON_TOOL_OUTPUT_CHARS = 1_000_000
 _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES = 400
 _MAX_COMPILEALL_FILES = 100
+_MAX_STATIC_FINDINGS_PER_TOOL = 100  # Cap to prevent OOM with excessive diagnostics
 
 
 @dataclass(frozen=True)
@@ -191,9 +192,26 @@ class StaticAnalyzer:
         findings.extend(self._heuristic_findings(context))
         uncertain_risks.extend(self._heuristic_uncertain_risks(context))
 
+        # Cap findings to prevent OOM with excessive diagnostics
+        if len(findings) > _MAX_STATIC_FINDINGS_PER_TOOL:
+            total_findings = len(findings)
+            findings = findings[:_MAX_STATIC_FINDINGS_PER_TOOL]
+            uncertain_risks.append(
+                UncertainRisk(
+                    risk="Static analysis findings were capped.",
+                    reason_uncertain=(
+                        f"Total of {total_findings} findings exceeded the maximum of "
+                        f"{_MAX_STATIC_FINDINGS_PER_TOOL}. Only the first {_MAX_STATIC_FINDINGS_PER_TOOL} were retained."
+                    ),
+                    suggested_verification="Run static analysis tools manually to see all findings.",
+                )
+            )
+
         posture = "not_run"
-        if commands:
-            posture = "issues_found" if findings else "clean"
+        if findings:
+            posture = "issues_found"
+        elif commands:
+            posture = "clean"
         if unavailable_tools and posture == "clean":
             posture = "unavailable"
 
