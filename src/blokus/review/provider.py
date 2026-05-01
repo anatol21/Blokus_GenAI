@@ -69,6 +69,7 @@ class OpenRouterClient:
 
         attempt_count = self.max_retries + 1
         body: object | None = None
+        last_error: Exception | None = None
         for attempt in range(1, attempt_count + 1):
             try:
                 with _OPENROUTER_REQUEST_SEMAPHORE:
@@ -77,21 +78,26 @@ class OpenRouterClient:
                         body = json.loads(raw_body.decode("utf-8"))
                 break
             except HTTPError as exc:
-                if attempt == attempt_count or not _is_retryable_http_error(exc):
+                last_error = exc
+                if attempt >= attempt_count or not _is_retryable_http_error(exc):
                     raise ProviderUnavailable(f"OpenRouter request failed: {exc}") from exc
                 _sleep_before_retry(attempt)
             except (URLError, TimeoutError) as exc:
-                if attempt == attempt_count:
+                last_error = exc
+                if attempt >= attempt_count:
                     raise ProviderUnavailable(
                         f"OpenRouter request failed after {attempt_count} attempts: {exc}"
                     ) from exc
                 _sleep_before_retry(attempt)
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                if attempt == attempt_count:
+                last_error = exc
+                if attempt >= attempt_count:
                     raise ProviderUnavailable("OpenRouter response was not valid JSON.") from exc
                 _sleep_before_retry(attempt)
 
         if body is None:
+            if last_error is not None:
+                raise ProviderUnavailable("OpenRouter request failed before producing a response body.") from last_error
             raise ProviderUnavailable("OpenRouter request did not produce a response body.")
 
         if not isinstance(body, dict):

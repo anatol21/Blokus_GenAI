@@ -127,6 +127,7 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertIsNotNone(agentic_code_review.COMMENT_MARKERS)
             self.assertIn(repo_root, sys.path)
             self.assertIn(src_root, sys.path)
+            self.assertLess(sys.path.index(src_root), sys.path.index(repo_root))
 
     def test_main_raises_when_lazy_imports_remain_uninitialized(self) -> None:
         with mock.patch.object(

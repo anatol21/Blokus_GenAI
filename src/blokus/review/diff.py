@@ -131,12 +131,12 @@ class _PatchAccumulator:
         self._diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
 
     def add_line(self, line: str) -> None:
-        self._track_paths(line)
-        self.tracker.feed(line)
         if self._should_skip_remaining_lines():
             if self._should_scan_post_cap_performance(line):
                 self._track_performance(line)
             return
+        self._track_paths(line)
+        self.tracker.feed(line)
         if self.analysis_truncated:
             self._track_performance(line)
         elif self._would_exceed_analysis_limit(line):

@@ -476,7 +476,7 @@ class AgenticReviewTests(unittest.TestCase):
 
                 self.assertTrue(block.patch_truncated)
                 self.assertTrue(block.analysis_truncated)
-                self.assertEqual(wrapped_feed.call_count, 8)
+                self.assertEqual(wrapped_feed.call_count, 5)
 
     def test_patch_accumulator_tracks_performance_markers_after_truncation_caps_trip(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -1592,7 +1592,7 @@ class AgenticReviewTests(unittest.TestCase):
             _changed_file("src/blokus/engine.py", line_start=8, line_end=8),
             _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
         )
-        expected = 3
+        expected = min(review_coordinator.MAX_SPECIALIST_WORKERS, 3)
         started: set[str] = set()
         started_lock = threading.Lock()
         all_started = threading.Event()
@@ -3252,6 +3252,49 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(len(response.findings), 1)
         self.assertFalse(response.findings[0].blocking_recommendation)
+
+    def test_blocking_recommendation_parses_numeric_boolean_values(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Numeric true",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "Test",
+                            "impact": "Test",
+                            "suggested_action": "Test",
+                            "blocking_recommendation": 1,
+                        },
+                        {
+                            "title": "Numeric false",
+                            "severity": "high",
+                            "confidence": "high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "Test",
+                            "impact": "Test",
+                            "suggested_action": "Test",
+                            "blocking_recommendation": 0,
+                        },
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 2)
+        self.assertTrue(response.findings[0].blocking_recommendation)
+        self.assertFalse(response.findings[1].blocking_recommendation)
 
     def test_compileall_capped_for_large_change_set(self) -> None:
         """Compileall should be capped to 100 files when >400 files."""

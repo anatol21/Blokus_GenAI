@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import PurePosixPath
-from typing import cast
 
 from blokus.review.config import ReviewConfig
 from blokus.review.prompts import load_prompt
@@ -166,9 +165,12 @@ def _parse_specialist_response(
     findings: list[Finding] = []
     uncertain_risks: list[UncertainRisk] = []
     unmatched_paths: set[str] = set()
-    raw_findings = _dict_list(data.get("findings"))
+    findings_value = data.get("findings")
+    raw_findings = findings_value if isinstance(findings_value, list) else []
     findings_were_truncated = len(raw_findings) > MAX_SPECIALIST_FINDINGS_TO_INSPECT
     for item in raw_findings[:MAX_SPECIALIST_FINDINGS_TO_INSPECT]:
+        if not isinstance(item, dict):
+            continue
         if not required_keys.issubset(item):
             continue
         raw_path = str(item["file"])
@@ -248,7 +250,11 @@ def _parse_specialist_response(
             )
         )
 
-    for item in _dict_list(data.get("uncertain_risks")):
+    uncertain_risks_value = data.get("uncertain_risks")
+    raw_uncertain_risks = uncertain_risks_value if isinstance(uncertain_risks_value, list) else []
+    for item in raw_uncertain_risks:
+        if not isinstance(item, dict):
+            continue
         if not all(key in item for key in ("risk", "reason_uncertain", "suggested_verification")):
             continue
         uncertain_risks.append(
@@ -264,14 +270,6 @@ def _parse_specialist_response(
         uncertain_risks=tuple(uncertain_risks),
         note=str(data.get("note", "")),
     )
-
-
-def _dict_list(value: object) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        return []
-    return [cast(dict[str, object], item) for item in value if isinstance(item, dict)]
-
-
 def _int_value(value: object) -> int | None:
     try:
         return int(str(value))
@@ -286,8 +284,18 @@ def _parse_blocking_recommendation(value: object) -> bool:
     """
     if isinstance(value, bool):
         return value
+    if isinstance(value, (int, float)):
+        if value in {0, 0.0}:
+            return False
+        if value in {1, 1.0}:
+            return True
+        return False
     if isinstance(value, str):
-        return value.lower().strip() == "true"
+        normalized = value.lower().strip()
+        if normalized in {"true", "yes", "1"}:
+            return True
+        if normalized in {"false", "no", "0"}:
+            return False
     return False
 
 

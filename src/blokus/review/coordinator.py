@@ -25,6 +25,7 @@ MAX_RENDERED_DIFF_CHARS = 120_000
 MAX_RENDERED_PATCH_CHARS = 12_000
 _RENDERED_PATCH_TRUNCATION_MARKER = "\n... [diff hunk truncated for scale]\n"
 _RENDERED_BUNDLE_TRUNCATION_MARKER = "\n\n... [additional diff context truncated for scale]"
+MAX_SPECIALIST_WORKERS = 2
 
 
 @dataclass(frozen=True)
@@ -209,7 +210,8 @@ class ReviewCoordinator:
         )
 
         futures_by_specialist: dict[str, Future[SpecialistResponse]] = {}
-        with ThreadPoolExecutor(max_workers=len(specialist_specs)) as executor:
+        max_workers = min(MAX_SPECIALIST_WORKERS, len(specialist_specs))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             for specialist, files, rendered_diff in specialist_specs:
                 futures_by_specialist[specialist] = executor.submit(
                     self._run_specialist,

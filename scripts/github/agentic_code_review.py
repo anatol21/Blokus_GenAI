@@ -149,9 +149,11 @@ def _setup_import_path() -> None:
     """
     repo_root = Path(__file__).resolve().parents[2]
     src_root = repo_root / "src"
-    for import_root in (str(src_root), str(repo_root)):
-        if import_root not in sys.path:
-            sys.path.insert(0, import_root)
+    desired_prefix = [str(src_root), str(repo_root)]
+    for import_root in desired_prefix:
+        while import_root in sys.path:
+            sys.path.remove(import_root)
+    sys.path[:0] = desired_prefix
 
 
 def _parse_args() -> argparse.Namespace:
