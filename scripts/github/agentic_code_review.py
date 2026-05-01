@@ -10,11 +10,11 @@ from pathlib import Path
 import sys
 
 # Module-level placeholders for lazy imports (required for test patching)
-load_review_config = None  # type: ignore
-ReviewCoordinator = None  # type: ignore
-GitHubClient = None  # type: ignore
-load_event_payload = None  # type: ignore
-COMMENT_MARKERS = None  # type: ignore
+load_review_config = None
+ReviewCoordinator = None
+GitHubClient = None
+load_event_payload = None
+COMMENT_MARKERS = None
 
 
 def main() -> int:
