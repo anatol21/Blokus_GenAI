@@ -14,9 +14,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Type
 
-    from blokus.review.config import load_review_config as _load_review_config
-    from blokus.review.coordinator import ReviewCoordinator as _ReviewCoordinator
-    from scripts.github.gh_helpers import GitHubClient as _GitHubClient, load_event_payload as _load_event_payload
+    from blokus.review.config import load_review_config as _load_review_config  # noqa: F401
+    from blokus.review.coordinator import ReviewCoordinator as _ReviewCoordinator  # noqa: F401
+    from scripts.github.gh_helpers import GitHubClient as _GitHubClient, load_event_payload as _load_event_payload  # noqa: F401
 
 # Module-level placeholders for lazy imports (required for test patching)
 load_review_config: "Callable[..., Any] | None" = None
@@ -30,6 +30,13 @@ def main() -> int:
     """Main entry point - sets up import path and runs review."""
     # Lazy-load dependencies to avoid import-time side effects
     _lazy_imports()
+    
+    # Asserts inform mypy that lazy imports have been initialized
+    assert load_review_config is not None
+    assert ReviewCoordinator is not None
+    assert GitHubClient is not None
+    assert load_event_payload is not None
+    assert COMMENT_MARKERS is not None
     
     args = _parse_args()
     repo_root = _resolve_repo_root()
