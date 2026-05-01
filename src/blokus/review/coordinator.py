@@ -132,6 +132,7 @@ class ReviewCoordinator:
                 )
             )
 
+        performance_review_covered = False
         if provider is not None and context.changed_files:
             specialist_runner = SpecialistRunner(self.config, provider)
             findings, uncertain_risks, rendered_diff_truncated = self._run_specialists(
@@ -142,6 +143,10 @@ class ReviewCoordinator:
                 performance_requested,
             )
             diff_context_truncated = diff_context_truncated or rendered_diff_truncated
+            performance_review_covered = (
+                _performance_specialist_can_review(context)
+                and not any(risk.risk == "Performance specialist could not complete this run." for risk in uncertain_risks)
+            )
 
         if diff_context_truncated:
             _append_diff_truncation_risk(uncertain_risks)
@@ -149,7 +154,14 @@ class ReviewCoordinator:
             _append_diff_analysis_truncation_risk(uncertain_risks)
 
         findings = self._dedupe_and_limit(findings)
-        summary = self._build_summary(context, findings, static_report, performance_requested, provider_available)
+        summary = self._build_summary(
+            context,
+            findings,
+            static_report,
+            performance_requested,
+            provider_available,
+            performance_review_covered,
+        )
         verdict = self._build_verdict(findings, uncertain_risks)
         result = ReviewResult(
             pr=context.pr,
@@ -174,14 +186,23 @@ class ReviewCoordinator:
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk], bool]:
+        reviewable_changed_files = tuple(changed_file for changed_file in context.changed_files if changed_file.patch.strip())
+        reviewable_executable_files = tuple(
+            changed_file for changed_file in context.executable_files if changed_file.patch.strip()
+        )
         rendered_blocks = _RenderedBlockCache()
-        all_changed_diff, executable_diff = _render_specialist_diff_bundles(context, rendered_blocks)
+        all_changed_diff, executable_diff = _render_specialist_diff_bundles(
+            context,
+            rendered_blocks,
+            reviewable_changed_files,
+            reviewable_executable_files,
+        )
         specialist_specs: list[tuple[str, tuple[ChangedFile, ...], str]] = [
-            ("correctness", context.executable_files, executable_diff.text),
-            ("tests", context.changed_files, all_changed_diff.text),
+            ("correctness", reviewable_executable_files, executable_diff.text),
+            ("tests", reviewable_changed_files, all_changed_diff.text),
         ]
         if performance_requested:
-            specialist_specs.append(("performance", context.executable_files, executable_diff.text))
+            specialist_specs.append(("performance", reviewable_executable_files, executable_diff.text))
         prompt_context_truncated = any(
             prompt_context_was_truncated(context, files)
             for _, files, _ in specialist_specs
@@ -251,6 +272,7 @@ class ReviewCoordinator:
         static_report: StaticAnalysisReport,
         performance_requested: bool,
         provider_available: bool,
+        performance_review_covered: bool,
     ) -> ReviewSummary:
         overall_risk = context.impact
         if findings:
@@ -270,7 +292,7 @@ class ReviewCoordinator:
         performance_findings = [finding for finding in findings if finding.category == "performance"]
         if performance_findings:
             performance_posture = "issues_found"
-        elif performance_requested and provider_available:
+        elif performance_requested and provider_available and performance_review_covered:
             performance_posture = "clean"
         elif performance_requested:
             performance_posture = "review_recommended"
@@ -344,24 +366,26 @@ def _render_diff_bundle(
 def _render_specialist_diff_bundles(
     context: ReviewContext,
     rendered_blocks: _RenderedBlockCache,
+    changed_files: tuple[ChangedFile, ...],
+    executable_files: tuple[ChangedFile, ...],
 ) -> tuple[_RenderedDiffBundle, _RenderedDiffBundle]:
-    if context.raw_diff:
+    if context.raw_diff and changed_files == context.changed_files:
         all_changed_diff = _RenderedDiffBundle(
             text=_truncate_text(context.raw_diff, MAX_RENDERED_DIFF_CHARS, _RENDERED_BUNDLE_TRUNCATION_MARKER),
             truncated=len(context.raw_diff) > MAX_RENDERED_DIFF_CHARS,
         )
         executable_diff = (
             all_changed_diff
-            if context.changed_files == context.executable_files
-            else _render_diff_bundle(context.executable_files, rendered_blocks)
+            if changed_files == executable_files
+            else _render_diff_bundle(executable_files, rendered_blocks)
         )
         return all_changed_diff, executable_diff
 
-    if context.changed_files == context.executable_files:
-        bundle = _render_diff_bundle(context.changed_files, rendered_blocks)
+    if changed_files == executable_files:
+        bundle = _render_diff_bundle(changed_files, rendered_blocks)
         return bundle, bundle
 
-    executable_paths = {changed_file.path for changed_file in context.executable_files}
+    executable_paths = {changed_file.path for changed_file in executable_files}
     all_parts: list[str] = []
     executable_parts: list[str] = []
     all_length = 0
@@ -371,7 +395,7 @@ def _render_specialist_diff_bundles(
     all_full = False
     executable_full = False
 
-    for changed_file in context.changed_files:
+    for changed_file in changed_files:
         block, block_truncated = rendered_blocks.get(changed_file)
         if not block:
             continue
@@ -506,6 +530,17 @@ def _append_prompt_context_truncation_risk(uncertain_risks: list[UncertainRisk])
     if any(existing.risk == risk.risk for existing in uncertain_risks):
         return
     uncertain_risks.append(risk)
+
+
+def _performance_specialist_can_review(context: ReviewContext) -> bool:
+    performance_sensitive_files = tuple(
+        changed_file
+        for changed_file in context.executable_files
+        if changed_file.performance_sensitive
+    )
+    return bool(performance_sensitive_files) and all(
+        changed_file.patch.strip() for changed_file in performance_sensitive_files
+    )
 
 
 _NON_BLOCKING_UNCERTAIN_RISKS = {

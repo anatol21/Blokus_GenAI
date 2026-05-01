@@ -294,16 +294,26 @@ def _normalize_category(value: object) -> str:
 
 def _load_json_object(raw_response: str) -> dict[str, object]:
     try:
-        return json.loads(raw_response)
+        payload = json.loads(raw_response)
+        if isinstance(payload, dict):
+            return payload
+        return _invalid_specialist_payload("Specialist returned non-object JSON.")
     except json.JSONDecodeError:
         start = raw_response.find("{")
         end = raw_response.rfind("}")
         if start == -1 or end == -1 or end <= start:
-            return {"findings": [], "uncertain_risks": [], "note": "Invalid non-JSON specialist response."}
+            return _invalid_specialist_payload("Invalid non-JSON specialist response.")
         try:
-            return json.loads(raw_response[start : end + 1])
+            payload = json.loads(raw_response[start : end + 1])
+            if isinstance(payload, dict):
+                return payload
+            return _invalid_specialist_payload("Specialist returned non-object JSON.")
         except json.JSONDecodeError:
-            return {"findings": [], "uncertain_risks": [], "note": "Invalid non-JSON specialist response."}
+            return _invalid_specialist_payload("Invalid non-JSON specialist response.")
+
+
+def _invalid_specialist_payload(note: str) -> dict[str, object]:
+    return {"findings": [], "uncertain_risks": [], "note": note}
 
 
 def prompt_context_was_truncated(context: ReviewContext, files: tuple[ChangedFile, ...]) -> bool:

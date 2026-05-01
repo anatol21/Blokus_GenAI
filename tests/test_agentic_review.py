@@ -268,6 +268,46 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(git_output.call_count, 1)
         git_output.assert_called_once_with(config, config.repo_root, ["diff", "--unified=3", "base...head"])
 
+    def test_load_changed_files_caps_global_patch_storage_for_large_change_sets(self) -> None:
+        config = _make_config(REPO_ROOT)
+        patch_blocks = [
+            review_diff._PatchBlock(
+                path="src/first.py",
+                status="M",
+                patch="diff --git a/src/first.py b/src/first.py\n@@ -1,1 +1,1 @@\n-a\n+b",
+                line_spans=(LineSpan(1, 1),),
+                old_path=None,
+                performance_sensitive=False,
+                patch_truncated=False,
+            ),
+            review_diff._PatchBlock(
+                path="src/second.py",
+                status="M",
+                patch="diff --git a/src/second.py b/src/second.py\n@@ -5,1 +5,1 @@\n-a\n+b",
+                line_spans=(LineSpan(5, 5),),
+                old_path=None,
+                performance_sensitive=False,
+                patch_truncated=False,
+            ),
+        ]
+
+        with mock.patch.object(
+            review_diff,
+            "_iter_git_patch_blocks",
+            return_value=patch_blocks,
+        ), mock.patch.object(review_diff, "MAX_STORED_PATCH_FILES", 1), mock.patch.object(
+            review_diff,
+            "MAX_TOTAL_STORED_PATCH_CHARS",
+            10_000,
+        ):
+            changed_files = review_diff._load_changed_files(config, "base", "head")
+
+        self.assertEqual(len(changed_files), 2)
+        self.assertTrue(changed_files[0].patch)
+        self.assertEqual(changed_files[1].patch, "")
+        self.assertTrue(changed_files[1].patch_truncated)
+        self.assertTrue(changed_files[1].touches_line(5))
+
     def test_load_changed_files_truncates_large_patches_after_analysis(self) -> None:
         config = _make_config(REPO_ROOT)
         large_hunk_lines = [f"+line {index}" for index in range(1800)]
@@ -767,6 +807,14 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.uncertain_risks, ())
         self.assertEqual(response.note, "Invalid non-JSON specialist response.")
 
+    def test_specialist_response_handles_non_object_json(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response('["unexpected"]', "correctness", files)
+
+        self.assertEqual(response.findings, ())
+        self.assertEqual(response.uncertain_risks, ())
+        self.assertEqual(response.note, "Specialist returned non-object JSON.")
+
     def test_specialist_response_handles_invalid_embedded_json(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
         response = _parse_specialist_response(
@@ -908,7 +956,7 @@ class AgenticReviewTests(unittest.TestCase):
             )
         ]
 
-        summary = coordinator._build_summary(context, findings, static_report, False, True)
+        summary = coordinator._build_summary(context, findings, static_report, False, True, False)
 
         self.assertEqual(summary.overall_risk, context.impact)
 
@@ -1321,6 +1369,77 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertNotIn("schemas/agentic_review_output.schema.json", captured["correctness"][1])
         self.assertIn("schemas/agentic_review_output.schema.json", captured["tests"][1])
 
+    def test_coordinator_skips_patchless_files_when_preparing_specialist_inputs(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=8, line_end=8, patch="   ", patch_truncated=True),
+            _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
+            raw_diff="",
+        )
+        captured: dict[str, tuple[str, ...]] = {}
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                del context, rendered_diff
+                captured[specialist] = tuple(changed_file.path for changed_file in files)
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=False,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertEqual(uncertain_risks, [])
+        self.assertFalse(truncated)
+        self.assertEqual(captured["correctness"], ())
+        self.assertEqual(captured["tests"], ("schemas/agentic_review_output.schema.json",))
+
+    def test_coordinator_does_not_reuse_raw_diff_when_patchless_files_are_filtered(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file("src/blokus/engine.py", line_start=8, line_end=8, patch="   ", patch_truncated=True),
+            _changed_file("schemas/agentic_review_output.schema.json", line_start=1, line_end=1),
+        )
+        captured: dict[str, str] = {}
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                del context, files
+                captured[specialist] = rendered_diff
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=False,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertEqual(uncertain_risks, [])
+        self.assertFalse(truncated)
+        self.assertNotIn("src/blokus/engine.py", captured["tests"])
+        self.assertIn("schemas/agentic_review_output.schema.json", captured["tests"])
+
     def test_coordinator_runs_specialists_concurrently(self) -> None:
         config = _make_config(REPO_ROOT)
         coordinator = ReviewCoordinator(config)
@@ -1370,6 +1489,36 @@ class AgenticReviewTests(unittest.TestCase):
             for index in range(100)
         )
         context = _review_context(*changed_files, raw_diff="", commits=tuple(f"commit {i}" for i in range(30)))
+
+        class FakeRunner:
+            def run(
+                self,
+                specialist: str,
+                context: ReviewContext,
+                files: tuple[ChangedFile, ...],
+                rendered_diff: str,
+            ) -> SpecialistResponse:
+                return SpecialistResponse(findings=(), uncertain_risks=(), note="")
+
+        findings, uncertain_risks, truncated = coordinator._run_specialists(
+            cast(SpecialistRunner, FakeRunner()),
+            context,
+            [],
+            [],
+            performance_requested=False,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertFalse(truncated)
+        self.assertTrue(
+            any(risk.risk == "Commit or file-list context was truncated for scale." for risk in uncertain_risks)
+        )
+
+    def test_coordinator_adds_uncertain_risk_when_file_list_is_truncated(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        changed_files = tuple(_changed_file(f"src/module_{index}.py", line_start=1, line_end=1) for index in range(90))
+        context = _review_context(*changed_files, raw_diff="")
 
         class FakeRunner:
             def run(
@@ -2988,7 +3137,7 @@ class AgenticReviewTests(unittest.TestCase):
         context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
         static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
 
-        summary = coordinator._build_summary(context, [], static_report, False, True)
+        summary = coordinator._build_summary(context, [], static_report, False, True, False)
 
         self.assertEqual(summary.test_posture, "review_recommended")
 
@@ -3000,9 +3149,28 @@ class AgenticReviewTests(unittest.TestCase):
         context = _review_context(_changed_file("tests/test_engine.py", line_start=12, line_end=12))
         static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
 
-        summary = coordinator._build_summary(context, [], static_report, False, True)
+        summary = coordinator._build_summary(context, [], static_report, False, True, False)
 
         self.assertEqual(summary.test_posture, "unknown")
+
+    def test_performance_posture_stays_review_recommended_when_sensitive_diff_body_is_omitted(self) -> None:
+        config = _make_config(REPO_ROOT)
+        coordinator = ReviewCoordinator(config)
+        context = _review_context(
+            _changed_file(
+                "src/blokus/engine.py",
+                line_start=12,
+                line_end=12,
+                patch="   ",
+                performance_sensitive=True,
+                patch_truncated=True,
+            )
+        )
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
+
+        summary = coordinator._build_summary(context, [], static_report, True, True, False)
+
+        self.assertEqual(summary.performance_posture, "review_recommended")
 
     def test_raw_diff_truncated_when_too_large(self) -> None:
         """Raw diff should be truncated when it exceeds MAX_RENDERED_DIFF_CHARS."""

@@ -18,6 +18,8 @@ from blokus.review.types import ChangedFile, LineSpan, ReviewContext, ReviewPayl
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performance|refactor)\b", re.IGNORECASE)
 MAX_STORED_PATCH_CHARS = 16_000
+MAX_STORED_PATCH_FILES = 500
+MAX_TOTAL_STORED_PATCH_CHARS = 1_500_000
 MAX_ANALYZED_PATCH_LINES = 50_000
 MAX_ANALYZED_PATCH_CHARS = 2_000_000
 MAX_POST_TRUNCATION_ANALYSIS_LINES = 2_000
@@ -326,19 +328,37 @@ def _resolve_refs(
 def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> tuple[ChangedFile, ...]:
     diff_ref = f"{base_ref}...{head_ref}"
     changed_files: list[ChangedFile] = []
+    stored_patch_files = 0
+    stored_patch_chars = 0
 
     for patch_block in _iter_git_patch_blocks(config, config.repo_root, ["diff", "--unified=3", diff_ref]):
+        excluded = _is_excluded(config, patch_block.path)
+        patch = patch_block.patch
+        patch_truncated = patch_block.patch_truncated
+
+        if excluded:
+            patch = ""
+        elif patch and (
+            stored_patch_files >= MAX_STORED_PATCH_FILES
+            or stored_patch_chars + len(patch) > MAX_TOTAL_STORED_PATCH_CHARS
+        ):
+            patch = ""
+            patch_truncated = True
+        elif patch:
+            stored_patch_files += 1
+            stored_patch_chars += len(patch)
+
         changed_files.append(
             ChangedFile(
                 path=patch_block.path,
                 status=patch_block.status,
-                patch=patch_block.patch,
+                patch=patch,
                 line_spans=patch_block.line_spans,
                 executable=_is_executable_path(patch_block.path),
                 categories=tuple(_categorize_path(patch_block.path)),
                 old_path=patch_block.old_path,
                 performance_sensitive=patch_block.performance_sensitive,
-                patch_truncated=patch_block.patch_truncated,
+                patch_truncated=patch_truncated,
                 analysis_truncated=patch_block.analysis_truncated,
             )
         )
