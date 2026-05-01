@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
@@ -13,6 +14,8 @@ from blokus.review.config import MAX_PROVIDER_RETRIES, ReviewConfig
 
 
 _MAX_OPENROUTER_RESPONSE_BYTES = 1_000_000
+_MAX_CONCURRENT_OPENROUTER_REQUESTS = 2
+_OPENROUTER_REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_OPENROUTER_REQUESTS)
 
 
 class ProviderUnavailable(RuntimeError):
@@ -68,9 +71,10 @@ class OpenRouterClient:
         body: object | None = None
         for attempt in range(1, attempt_count + 1):
             try:
-                with urlopen(request, timeout=self.timeout_seconds) as response:
-                    raw_body = _read_bounded_response(response)
-                    body = json.loads(raw_body.decode("utf-8"))
+                with _OPENROUTER_REQUEST_SEMAPHORE:
+                    with urlopen(request, timeout=self.timeout_seconds) as response:
+                        raw_body = _read_bounded_response(response)
+                        body = json.loads(raw_body.decode("utf-8"))
                 break
             except HTTPError as exc:
                 if attempt == attempt_count or not _is_retryable_http_error(exc):

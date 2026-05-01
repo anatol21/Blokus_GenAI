@@ -407,8 +407,48 @@ class AgenticReviewTests(unittest.TestCase):
         block = cast(review_diff._PatchBlock, accumulator.build())
 
         self.assertTrue(block.analysis_truncated)
-        self.assertFalse(block.performance_sensitive)
+        self.assertTrue(block.performance_sensitive)
         self.assertEqual(block.line_spans, (LineSpan(1, 6),))
+
+    def test_patch_accumulator_caps_post_cap_performance_scanning_budget(self) -> None:
+        config = _make_config(REPO_ROOT)
+
+        with mock.patch.object(review_diff, "MAX_ANALYZED_PATCH_LINES", 3), mock.patch.object(
+            review_diff,
+            "MAX_ANALYZED_PATCH_CHARS",
+            10_000,
+        ), mock.patch.object(review_diff, "MAX_STORED_PATCH_CHARS", 90), mock.patch.object(
+            review_diff,
+            "MAX_POST_CAP_PERFORMANCE_SCAN_LINES",
+            2,
+        ), mock.patch.object(
+            review_diff,
+            "MAX_POST_CAP_PERFORMANCE_SCAN_CHARS",
+            10_000,
+        ):
+            accumulator = review_diff._PatchAccumulator(config)
+            with mock.patch.object(accumulator, "_track_performance", wraps=accumulator._track_performance) as wrapped_track:
+                for line in (
+                    "diff --git a/src/demo.py b/src/demo.py",
+                    "--- a/src/demo.py",
+                    "+++ b/src/demo.py",
+                    "@@ -0,0 +1,8 @@",
+                    "+line 1",
+                    "+line 2",
+                    "+line 3",
+                    "+line 4",
+                    "+line 5",
+                    "+line 6",
+                    "+line 7",
+                    "+line 8",
+                ):
+                    accumulator.add_line(line)
+
+        block = cast(review_diff._PatchBlock, accumulator.build())
+
+        self.assertTrue(block.patch_truncated)
+        self.assertTrue(block.analysis_truncated)
+        self.assertLessEqual(wrapped_track.call_count, 6)
 
     def test_patch_accumulator_skips_tail_lines_after_both_truncation_limits_trip(self) -> None:
         config = _make_config(REPO_ROOT)

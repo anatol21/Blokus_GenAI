@@ -24,6 +24,8 @@ MAX_ANALYZED_PATCH_LINES = 50_000
 MAX_ANALYZED_PATCH_CHARS = 2_000_000
 MAX_POST_TRUNCATION_ANALYSIS_LINES = 2_000
 MAX_POST_TRUNCATION_ANALYSIS_CHARS = 100_000
+MAX_POST_CAP_PERFORMANCE_SCAN_LINES = 2_000
+MAX_POST_CAP_PERFORMANCE_SCAN_CHARS = 100_000
 MAX_REVIEW_CONTEXT_COMMITS = 25
 _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 
@@ -119,6 +121,8 @@ class _PatchAccumulator:
     post_truncation_analyzed_lines: int = 0
     post_truncation_analyzed_chars: int = 0
     analysis_truncated: bool = False
+    post_cap_performance_scan_lines: int = 0
+    post_cap_performance_scan_chars: int = 0
     _path_markers_checked: bool = field(default=False, repr=False)
     _diff_marker_pattern: re.Pattern[str] | None = field(default=None, repr=False)
 
@@ -130,17 +134,17 @@ class _PatchAccumulator:
         self._track_paths(line)
         self.tracker.feed(line)
         if self._should_skip_remaining_lines():
-            # Keep scanning for performance markers and line spans even when storage
-            # and deep analysis are capped, so downstream gating and span filtering
-            # remain correct for the full file diff.
-            self._track_performance(line)
-            return
-        if not self.analysis_truncated:
-            if self._would_exceed_analysis_limit(line):
-                self.analysis_truncated = True
-            else:
+            if self._should_scan_post_cap_performance(line):
                 self._track_performance(line)
-                self._record_analyzed_line(line)
+            return
+        if self.analysis_truncated:
+            self._track_performance(line)
+        elif self._would_exceed_analysis_limit(line):
+            self.analysis_truncated = True
+            self._track_performance(line)
+        else:
+            self._track_performance(line)
+            self._record_analyzed_line(line)
         self._append_bounded(line)
 
     def build(self) -> _PatchBlock | None:
@@ -245,6 +249,18 @@ class _PatchAccumulator:
             and self.analysis_truncated
             and (self.new_path is not None or self.old_path is not None)
         )
+
+    def _should_scan_post_cap_performance(self, line: str) -> bool:
+        if self.performance_sensitive:
+            return False
+        line_size = len(line) + 1
+        if self.post_cap_performance_scan_lines >= MAX_POST_CAP_PERFORMANCE_SCAN_LINES:
+            return False
+        if self.post_cap_performance_scan_chars + line_size > MAX_POST_CAP_PERFORMANCE_SCAN_CHARS:
+            return False
+        self.post_cap_performance_scan_lines += 1
+        self.post_cap_performance_scan_chars += line_size
+        return True
 
     def _record_analyzed_line(self, line: str) -> None:
         line_size = len(line) + 1
