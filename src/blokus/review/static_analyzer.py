@@ -25,9 +25,11 @@ _BASH_RE = re.compile(r"^(?P<file>.+?): line (?P<line>\d+): (?P<message>.+)$")
 _MAX_TOOL_BATCH_FILES = 1000
 _MAX_TOOL_BATCH_CHARS = 65_536
 _MAX_JSON_TOOL_OUTPUT_CHARS = 1_000_000
+_MAX_TOOL_CAPTURE_CHARS = _MAX_JSON_TOOL_OUTPUT_CHARS + 10_000
 _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES = 400
 _MAX_COMPILEALL_FILES = 100
 _MAX_STATIC_FINDINGS_PER_TOOL = 100  # Cap to prevent OOM with excessive diagnostics
+_TOOL_OUTPUT_TRUNCATION_MARKER = "\n... [output truncated for scale]\n"
 
 
 @dataclass(frozen=True)
@@ -651,46 +653,31 @@ class StaticAnalyzer:
         return None
 
     def _run_command(self, args: list[str]) -> ToolRun:
-        try:
-            completed = subprocess.run(
-                args,
-                cwd=self.config.repo_root,
-                capture_output=True,
-                text=True,
-                timeout=self.config.provider.timeout_seconds,
-            )
-            # Truncate stdout/stderr to bounded sizes to prevent OOM
-            max_output = _MAX_JSON_TOOL_OUTPUT_CHARS + 10_000  # Buffer for truncation marker
-            stdout = completed.stdout
-            stderr = completed.stderr
-            
-            if len(stdout) > max_output:
-                stdout = stdout[:max_output] + "\n... [output truncated for scale]\n"
-            
-            if len(stderr) > max_output:
-                stderr = stderr[:max_output] + "\n... [output truncated for scale]\n"
-            
-            return ToolRun(
-                command=" ".join(args),
-                returncode=completed.returncode,
-                stdout=stdout,
-                stderr=stderr,
-            )
-        except subprocess.TimeoutExpired as exc:
-            stdout = _coerce_stream_text(exc.stdout)
-            stderr = _coerce_stream_text(exc.stderr)
-            # Also truncate timeout output
-            max_output = _MAX_JSON_TOOL_OUTPUT_CHARS + 10_000
-            if len(stdout) > max_output:
-                stdout = stdout[:max_output] + "\n... [output truncated for scale]\n"
-            if len(stderr) > max_output:
-                stderr = stderr[:max_output] + "\n... [output truncated for scale]\n"
-            return ToolRun(
-                command=" ".join(args),
-                returncode=124,
-                stdout=stdout,
-                stderr=stderr + f"\nCommand timed out after {self.config.provider.timeout_seconds} seconds.",
-            )
+        with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+            try:
+                completed = subprocess.run(
+                    args,
+                    cwd=self.config.repo_root,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    timeout=self.config.provider.timeout_seconds,
+                )
+                return ToolRun(
+                    command=" ".join(args),
+                    returncode=completed.returncode,
+                    stdout=_read_bounded_tool_output(stdout_file),
+                    stderr=_read_bounded_tool_output(stderr_file),
+                )
+            except subprocess.TimeoutExpired:
+                return ToolRun(
+                    command=" ".join(args),
+                    returncode=124,
+                    stdout=_read_bounded_tool_output(stdout_file),
+                    stderr=(
+                        _read_bounded_tool_output(stderr_file)
+                        + f"\nCommand timed out after {self.config.provider.timeout_seconds} seconds."
+                    ),
+                )
 
     def _load_json_output(
         self,
@@ -765,6 +752,32 @@ def _coerce_stream_text(value: bytes | str | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _read_bounded_tool_output(handle: object, *, max_chars: int = _MAX_TOOL_CAPTURE_CHARS) -> str:
+    seek = getattr(handle, "seek", None)
+    read = getattr(handle, "read", None)
+    if not callable(seek) or not callable(read):
+        return ""
+
+    seek(0)
+    raw_value = read(max_chars + 1)
+    raw_bytes = _coerce_stream_bytes(raw_value)
+    truncated = len(raw_bytes) > max_chars
+    if truncated:
+        raw_bytes = raw_bytes[:max_chars]
+    text = raw_bytes.decode("utf-8", errors="replace")
+    if truncated:
+        text += _TOOL_OUTPUT_TRUNCATION_MARKER
+    return text
+
+
+def _coerce_stream_bytes(value: bytes | str | None) -> bytes:
+    if value is None:
+        return b""
+    if isinstance(value, bytes):
+        return value
+    return value.encode("utf-8", errors="replace")
 
 
 def _positive_int(value: object) -> int | None:

@@ -177,6 +177,82 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
                 event_payload,
             )
 
+    def test_main_ignores_non_file_event_paths(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "load_event_payload",
+        ) as load_event_payload, mock.patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": tmpdir},
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            load_event_payload.assert_not_called()
+            self.assertIsNone(coordinator_cls.return_value.run.call_args.kwargs["event_payload"])
+
+    def test_main_continues_when_event_payload_cannot_be_loaded(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "load_event_payload",
+            side_effect=ValueError("bad payload"),
+        ) as load_event_payload, mock.patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": str(Path(tmpdir) / "event.json")},
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            Path(tmpdir, "event.json").write_text("{}", encoding="utf-8")
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            load_event_payload.assert_called_once_with(str(Path(tmpdir) / "event.json"))
+            self.assertIsNone(coordinator_cls.return_value.run.call_args.kwargs["event_payload"])
+
     def test_main_writes_artifacts_and_posts_same_repo_comment(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=True, verdict="LGTM")

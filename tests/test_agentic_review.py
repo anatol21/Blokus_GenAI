@@ -14,6 +14,8 @@ from unittest import mock
 
 import blokus.review.coordinator as review_coordinator
 import blokus.review.diff as review_diff
+import blokus.review.renderer as review_renderer
+import blokus.review.static_analyzer as review_static_analyzer
 from blokus.review.config import HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
@@ -378,6 +380,44 @@ class AgenticReviewTests(unittest.TestCase):
                 self.assertTrue(block.analysis_truncated)
                 self.assertEqual(wrapped_feed.call_count, 5)
 
+    def test_patch_accumulator_caps_post_truncation_analysis_window(self) -> None:
+        config = _make_config(REPO_ROOT)
+
+        with mock.patch.object(review_diff, "MAX_ANALYZED_PATCH_LINES", 50_000), mock.patch.object(
+            review_diff,
+            "MAX_ANALYZED_PATCH_CHARS",
+            2_000_000,
+        ), mock.patch.object(review_diff, "MAX_STORED_PATCH_CHARS", 90), mock.patch.object(
+            review_diff,
+            "MAX_POST_TRUNCATION_ANALYSIS_LINES",
+            2,
+        ), mock.patch.object(
+            review_diff,
+            "MAX_POST_TRUNCATION_ANALYSIS_CHARS",
+            10_000,
+        ):
+            accumulator = review_diff._PatchAccumulator(config)
+            for line in (
+                "diff --git a/src/demo.py b/src/demo.py",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -0,0 +1,8 @@",
+                "+line 1",
+                "+line 2",
+                "+line 3",
+                "+line 4",
+                "+line 5",
+                "+line 6",
+                "+line 7",
+                "+line 8",
+            ):
+                accumulator.add_line(line)
+
+        block = cast(review_diff._PatchBlock, accumulator.build())
+
+        self.assertTrue(block.patch_truncated)
+        self.assertTrue(block.analysis_truncated)
+
     def test_parse_line_spans_adds_anchor_for_deletion_only_hunks(self) -> None:
         patch_text = "\n".join(
             [
@@ -406,6 +446,24 @@ class AgenticReviewTests(unittest.TestCase):
                 "-old value",
                 "-other old value",
                 " context line after deletion",
+            ]
+        )
+
+        spans = review_diff._parse_line_spans(patch_text)
+
+        self.assertEqual(spans, [LineSpan(12, 12)])
+
+    def test_parse_line_spans_keeps_deletion_anchor_when_hunk_has_only_deletions_and_context(self) -> None:
+        patch_text = "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "index 1111111..2222222 100644",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -10,2 +12,1 @@",
+                "-old value",
+                "-other old value",
+                " remaining context",
             ]
         )
 
@@ -1059,6 +1117,55 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(len(run.result.uncertain_risks), 1)
         self.assertIn("forked `pull_request` runs", run.result.uncertain_risks[0].reason_uncertain)
         from_env.assert_not_called()
+
+    def test_render_review_markdown_truncates_large_finding_and_risk_fields(self) -> None:
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=("compileall",), posture="clean")
+        finding = Finding(
+            id="long",
+            title="T" * 500,
+            severity="high",
+            confidence="high",
+            category="correctness",
+            file="src/blokus/engine.py",
+            line_start=12,
+            line_end=12,
+            evidence="E" * 5_000,
+            impact="I" * 5_000,
+            suggested_action="S" * 5_000,
+            blocking_recommendation=True,
+        )
+        risks = tuple(
+            UncertainRisk(
+                risk=f"R{index}-" + ("r" * 2_000),
+                reason_uncertain="u" * 2_000,
+                suggested_verification="v" * 2_000,
+            )
+            for index in range(20)
+        )
+        result = ReviewResult(
+            pr=context.pr,
+            summary=ReviewSummary(
+                overall_risk="high",
+                test_posture="partial",
+                static_analysis_posture="clean",
+                performance_posture="review_recommended",
+            ),
+            findings=(finding,),
+            uncertain_risks=risks,
+            verdict="NEEDS CHANGES",
+        )
+
+        markdown = review_renderer.render_review_markdown(
+            result,
+            context,
+            static_report,
+            marker="agentic-code-review",
+        )
+
+        self.assertLessEqual(len(markdown), review_renderer._MAX_RENDERED_MARKDOWN_CHARS)
+        self.assertIn("... [truncated for scale]", markdown)
+        self.assertIn("additional uncertain risks were omitted for scale", markdown)
 
     def test_coordinator_gracefully_falls_back_when_refs_are_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
@@ -2073,6 +2180,24 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(tool_run.returncode, 124)
         self.assertIn("timed out", tool_run.stderr.lower())
+
+    def test_static_analyzer_run_command_bounds_large_output(self) -> None:
+        config = _make_config(REPO_ROOT)
+        analyzer = StaticAnalyzer(config)
+
+        tool_run = analyzer._run_command(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.write('x' * 1105000); sys.stderr.write('y' * 1105000)",
+            ]
+        )
+
+        self.assertEqual(tool_run.returncode, 0)
+        self.assertLessEqual(len(tool_run.stdout), review_static_analyzer._MAX_TOOL_CAPTURE_CHARS + len(review_static_analyzer._TOOL_OUTPUT_TRUNCATION_MARKER))
+        self.assertLessEqual(len(tool_run.stderr), review_static_analyzer._MAX_TOOL_CAPTURE_CHARS + len(review_static_analyzer._TOOL_OUTPUT_TRUNCATION_MARKER))
+        self.assertIn("[output truncated for scale]", tool_run.stdout)
+        self.assertIn("[output truncated for scale]", tool_run.stderr)
 
     def test_static_analyzer_limits_compileall_to_changed_python_files(self) -> None:
         config = _make_config(REPO_ROOT)

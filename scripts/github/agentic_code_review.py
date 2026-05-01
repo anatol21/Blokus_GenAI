@@ -16,7 +16,10 @@ if TYPE_CHECKING:
 
     from blokus.review.config import load_review_config as _load_review_config  # noqa: F401
     from blokus.review.coordinator import ReviewCoordinator as _ReviewCoordinator  # noqa: F401
-    from scripts.github.gh_helpers import GitHubClient as _GitHubClient, load_event_payload as _load_event_payload  # noqa: F401
+    from scripts.github.gh_helpers import (  # noqa: F401
+        GitHubClient as _GitHubClient,
+        load_event_payload as _load_event_payload,
+    )
 
 # Module-level placeholders for lazy imports (required for test patching)
 load_review_config: "Callable[..., Any] | None" = None
@@ -30,23 +33,20 @@ def main() -> int:
     """Main entry point - sets up import path and runs review."""
     # Lazy-load dependencies to avoid import-time side effects
     _lazy_imports()
-    
+
     # Asserts inform mypy that lazy imports have been initialized
     assert load_review_config is not None
     assert ReviewCoordinator is not None
     assert GitHubClient is not None
     assert load_event_payload is not None
     assert COMMENT_MARKERS is not None
-    
+
     args = _parse_args()
     repo_root = _resolve_repo_root()
     config = load_review_config(repo_root=repo_root)
     coordinator = ReviewCoordinator(config)
 
-    event_payload = None
-    event_path = os.environ.get("GITHUB_EVENT_PATH")
-    if event_path and Path(event_path).exists():
-        event_payload = load_event_payload(event_path)
+    event_payload = _load_event_payload_if_available()
 
     run = coordinator.run(
         event_payload=event_payload,
@@ -79,36 +79,40 @@ def main() -> int:
 
 def _lazy_imports() -> None:
     """Lazy-load dependencies at runtime to avoid import-time side effects.
-    
+
     This allows tests to patch module-level attributes before main() runs.
     """
     global load_review_config, ReviewCoordinator, GitHubClient, load_event_payload, COMMENT_MARKERS
-    
+
     _setup_import_path()
-    
+
     if load_review_config is None:
         import blokus.review.config as rc
+
         load_review_config = rc.load_review_config
-    
+
     if ReviewCoordinator is None:
         import blokus.review.coordinator as rco
+
         ReviewCoordinator = rco.ReviewCoordinator
-    
+
     if GitHubClient is None or load_event_payload is None:
         import scripts.github.gh_helpers as gh
+
         if GitHubClient is None:
             GitHubClient = gh.GitHubClient
         if load_event_payload is None:
             load_event_payload = gh.load_event_payload
-    
+
     if COMMENT_MARKERS is None:
         import blokus.automation as auto
+
         COMMENT_MARKERS = auto.COMMENT_MARKERS
 
 
 def _setup_import_path() -> None:
     """Add repository paths to sys.path for imports.
-    
+
     This is called from _lazy_imports() to avoid side effects at import time.
     """
     repo_root = Path(__file__).resolve().parents[2]
@@ -143,6 +147,27 @@ def _env_int(name: str) -> int | None:
     try:
         return int(raw.strip())
     except ValueError:
+        return None
+
+
+def _load_event_payload_if_available() -> dict[str, object] | None:
+    assert load_event_payload is not None
+
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if not event_path:
+        return None
+
+    path = Path(event_path)
+    if not path.is_file():
+        return None
+
+    try:
+        return load_event_payload(event_path)
+    except (OSError, ValueError) as exc:
+        print(
+            f"Warning: failed to load GitHub event payload from `{event_path}`: {exc}",
+            file=sys.stderr,
+        )
         return None
 
 

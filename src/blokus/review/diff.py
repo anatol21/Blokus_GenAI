@@ -20,6 +20,8 @@ _SELF_DECLARED_RE = re.compile(r"\b(fix(?:ed)?|safe|tested|optimized?|performanc
 MAX_STORED_PATCH_CHARS = 16_000
 MAX_ANALYZED_PATCH_LINES = 50_000
 MAX_ANALYZED_PATCH_CHARS = 2_000_000
+MAX_POST_TRUNCATION_ANALYSIS_LINES = 2_000
+MAX_POST_TRUNCATION_ANALYSIS_CHARS = 100_000
 MAX_REVIEW_CONTEXT_COMMITS = 25
 _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 
@@ -68,7 +70,12 @@ class _LineSpanTracker:
             self.deletion_anchor = None
             return
 
-        if raw_line.startswith("-") or raw_line.startswith("\\"):
+        if raw_line.startswith("-"):
+            if self.span_start is None and self.deletion_anchor is None:
+                self.deletion_anchor = self.current_line
+            return
+
+        if raw_line.startswith("\\"):
             return
 
         if self.span_start is not None:
@@ -107,6 +114,8 @@ class _PatchAccumulator:
     performance_sensitive: bool = False
     analyzed_lines: int = 0
     analyzed_chars: int = 0
+    post_truncation_analyzed_lines: int = 0
+    post_truncation_analyzed_chars: int = 0
     analysis_truncated: bool = False
     _path_markers_checked: bool = field(default=False, repr=False)
     _diff_marker_pattern: re.Pattern[str] | None = field(default=None, repr=False)
@@ -125,8 +134,7 @@ class _PatchAccumulator:
                 self.analysis_truncated = True
             else:
                 self._track_performance(line)
-                self.analyzed_lines += 1
-                self.analyzed_chars += len(line) + 1
+                self._record_analyzed_line(line)
         self._append_bounded(line)
 
     def build(self) -> _PatchBlock | None:
@@ -212,9 +220,17 @@ class _PatchAccumulator:
         self.patch_truncated = True
 
     def _would_exceed_analysis_limit(self, line: str) -> bool:
+        line_size = len(line) + 1
         return (
             self.analyzed_lines >= MAX_ANALYZED_PATCH_LINES
-            or self.analyzed_chars + len(line) + 1 > MAX_ANALYZED_PATCH_CHARS
+            or self.analyzed_chars + line_size > MAX_ANALYZED_PATCH_CHARS
+            or (
+                self.patch_truncated
+                and (
+                    self.post_truncation_analyzed_lines >= MAX_POST_TRUNCATION_ANALYSIS_LINES
+                    or self.post_truncation_analyzed_chars + line_size > MAX_POST_TRUNCATION_ANALYSIS_CHARS
+                )
+            )
         )
 
     def _should_skip_remaining_lines(self) -> bool:
@@ -223,6 +239,14 @@ class _PatchAccumulator:
             and self.analysis_truncated
             and (self.new_path is not None or self.old_path is not None)
         )
+
+    def _record_analyzed_line(self, line: str) -> None:
+        line_size = len(line) + 1
+        self.analyzed_lines += 1
+        self.analyzed_chars += line_size
+        if self.patch_truncated:
+            self.post_truncation_analyzed_lines += 1
+            self.post_truncation_analyzed_chars += line_size
 
 
 def build_review_context(
