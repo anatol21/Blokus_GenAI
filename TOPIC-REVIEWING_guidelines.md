@@ -457,16 +457,86 @@ Manual: reviews start only when someone triggers a review.
 
 ### 2.3 Guidelines from LLM Experimentation
 
+This subsection documents only our **agentic PR review prototype**. It does not try to summarize every AI-related automation idea in the repository.
+
 **Models Used:**  
-- `[e.g., GPT-5.2, Claude 4.5 Sonnet, DeepSeek Coder, GitHub Copilot (Ask vs Agent etc.)]`
+- In the concrete prototype revision tested through PR #44, the configured review model was `openai/gpt-5.2` via OpenRouter, with separate slots for coordinator and specialist roles  
+- Local coding assistant used to refine prompts and inspect review output during iteration
+
+**Experiment Setup:**  
+- We evaluated the prototype on real repository pull-request diffs instead of isolated snippets, with PR #44 as the clearest observed iteration.  
+- The reviewer was scoped to the changed code between base and head refs. Non-executable artifacts such as `*.md`, `*.png`, and `*.pdf` were excluded unless they directly changed runtime behavior.  
+- Before any LLM-generated findings, we ran a diff-scoped static-analysis pass: `compileall`, `ruff`, `mypy`, `bash -n`, and `shellcheck` when relevant.  
+- The coordinator always asked for correctness and test-adequacy review, and only asked for performance review when the diff showed performance-sensitive signals such as loops, data loading, caching, or async behavior.  
+- The output was forced into a bounded Markdown/JSON contract, with a maximum number of findings and required fields such as severity, confidence, evidence, impact, and suggested action.  
+- When evidence was weak, the diff was truncated, or the claim could not be confirmed from changed lines, the intended behavior was to emit an `uncertain risk` instead of a blocking finding.  
+- The evidence base here is still limited: this was a prototype review setup, not a long-running production study across many PRs.
 
 **Prompts Used:**  
-- `[Prompt 1]`  
-- `[Prompt 2]`  
-- `[Prompt 3]`
+- Shared review-rules prompt: `Review only changed code, ignore excluded non-executable files by default, avoid generic style comments, judge behavior rather than wording or authority cues, and return valid JSON only.`  
+- Coordinator prompt: `Analyze the diff, classify impact, run static analysis first, always invoke correctness and test review, invoke performance only when justified, validate and deduplicate findings, cap the final result, and return one verdict.`  
+- Correctness prompt: `Focus only on changed executable code. Check regressions, invariants, null handling, error paths, ordering and state transitions, empty or large input, duplicate input, and caller-callee contract drift.`  
+- Test-adequacy prompt: `Check what behavior changed, which tests cover it, what gaps remain, whether those gaps are blocking, recommended, or optional, and explicitly say when no material test gap is visible.`  
+- Performance prompt: `Review only performance-sensitive changed code for algorithmic regressions, repeated I/O, inefficient loops, cache regressions, synchronous bottlenecks, memory issues, and large-input risks. Do not report theoretical micro-optimizations.`  
+- Evidence rule inside every specialist prompt: `Every finding must cite changed-code evidence, a concrete failure scenario or impact, and a specific remediation; otherwise return uncertainty instead of a blocking finding.`
+
+**Improvements from Iteration:**  
+- Running the static analyzer first improved trust in the final review. Concrete `mypy`, `ruff`, and compile/shell results gave the LLM something deterministic to explain instead of asking it to guess at basic defects.  
+- PR #44 showed that even a well-structured reviewer can still hallucinate a blocking finding when the diff is large, truncated, or only partially visible in the prompt. That led to a stricter rule: blocking findings need exact changed-code evidence and should be downgraded to an uncertain risk when the model cannot verify them cleanly.  
+- The same PR also showed that performance review needs explicit limits. Without that, the model tends to over-report non-material implementation details such as small fixed-cost subprocess or git metadata calls.  
+- Narrow specialist roles were more useful than one general “review everything” prompt. Correctness, tests, and performance each needed different constraints.  
+- Splitting the prompts into shared rules plus coordinator and specialist prompts was more reliable than one monolithic instruction block. The smaller prompts kept responsibilities clearer and made it easier to tune one review dimension without destabilizing the others.  
+- Direct tests for the CLI entrypoint, output schema, provider-unavailable path, and specialist parsing edge cases made the review stack more trustworthy than relying on a single successful workflow run.  
+- Requiring an evidence step for every adopted suggestion improved precision. The useful outputs were the ones that could point to a changed line, a static-analysis result, or a concrete verification step instead of just sounding plausible.
 
 **Extracted Guidelines:**  
-Format same as above.
+**Guideline 2.3.1: Review only the changed executable code and exclude non-behavioral files by default**  
+**Source:** Team LLM experimentation  
+**Description:** Limit the review to changed code between base and head refs, and exclude file types such as Markdown or images unless they directly affect runtime behavior.  
+**Reasoning:** Scoping the review tightly reduced noise and kept the agent focused on behavior-changing code.  
+**Example:** Ignore `*.md` and `*.png` files during specialist review unless the PR depends on them for executable behavior.  
+**When to Apply:** Apply this for PR review automation.  
+**When to Avoid:** Avoid this only when documentation or generated assets are themselves the object of review.
+
+**Guideline 2.3.2: Run diff-scoped static analysis before specialist LLM review**  
+**Source:** Team LLM experimentation  
+**Description:** Execute repository-appropriate static checks first and pass the relevant outputs into the review prompt instead of relying on the LLM to rediscover basic defects from raw code alone.  
+**Reasoning:** The most useful reviews came from a hybrid setup: static analyzers provided deterministic warnings, while the LLM translated those warnings into reviewer-friendly explanations and connected them to the PR context.  
+**Example:** Run `ruff`, `mypy`, and `compileall` on changed Python files before asking the correctness reviewer to comment on the patch.  
+**When to Apply:** Apply this whenever executable code changes in a PR.  
+**When to Avoid:** Avoid full analyzer runs only for documentation-only or clearly non-executable changes.
+
+**Guideline 2.3.3: Use narrow specialist roles instead of one broad reviewer prompt**  
+**Source:** Team LLM experimentation  
+**Description:** Split review into bounded roles such as correctness, test adequacy, and performance, and invoke only the roles that the diff justifies.  
+**Reasoning:** Narrow prompts produced more useful feedback and fewer generic comments than a single “review everything” instruction.  
+**Example:** Always run correctness and test review, but only run performance review when the diff changes loops, async behavior, data loading, or caching.  
+**When to Apply:** Apply this for medium or large PRs with mixed risk areas.  
+**When to Avoid:** Avoid the overhead for tiny, obviously low-risk diffs.
+
+**Guideline 2.3.4: Require a structured output contract and cap the number of findings**  
+**Source:** Team LLM experimentation  
+**Description:** Force the reviewer to return a small, structured set of findings with severity, confidence, evidence, impact, and suggested action instead of a long free-form essay.  
+**Reasoning:** Output constraints reduced hallucinated nitpicks, made it easier to compare runs, and kept the agentic review useful for PR authors instead of overwhelming them.  
+**Example:** Limit the final review to at most five findings and require each one to cite the changed file, changed logic, and a concrete failure scenario.  
+**When to Apply:** Apply this for automated PR review and CI summaries.  
+**When to Avoid:** Avoid rigid schemas only in exploratory brainstorming where structured review artifacts are not needed.
+
+**Guideline 2.3.5: Downgrade weak evidence to an uncertain risk instead of publishing a blocking finding**  
+**Source:** Team LLM experimentation  
+**Description:** If the model cannot confirm a claim from the visible diff, static-analysis output, tests, or repository policy, it should report uncertainty and request human verification rather than failing the PR on a speculative issue.  
+**Reasoning:** PR #44 exposed the main failure mode of agentic review in this repository: hallucinated blocker findings are much more harmful than openly uncertain follow-up questions.  
+**Example:** When the diff shown to the model is truncated or a suspected runtime bug cannot be reproduced from the changed lines, emit `uncertain_risk` with a suggested verification command instead of a `critical` finding.  
+**When to Apply:** Apply this for large PRs, truncated diffs, provider outages, or any review with weak evidence.  
+**When to Avoid:** Avoid downgrading issues that are already confirmed by a deterministic tool or a clearly visible failing code path.
+
+**Guideline 2.3.6: Keep provider and model choice configurable and fail gracefully when the reviewer is unavailable**  
+**Source:** Team LLM experimentation  
+**Description:** Select the review model through configuration or environment variables and make sure the review pipeline degrades safely when the provider is unavailable.  
+**Reasoning:** We experimented with multiple model roles, and the useful pattern was configurability without coupling repository runtime behavior to a single hosted model. Safe degradation also prevents a provider outage from being mistaken for a repository defect.  
+**Example:** Use an OpenRouter-backed model for correctness and test review, but if the provider is unavailable, still publish the static-analysis result and mark the rest as requiring human follow-up.  
+**When to Apply:** Apply this in CI/CD or shared team workflows where model availability, cost, or provider choice may change over time.  
+**When to Avoid:** Avoid overengineering provider abstraction for purely local, one-off experiments.
 
 ---
 
