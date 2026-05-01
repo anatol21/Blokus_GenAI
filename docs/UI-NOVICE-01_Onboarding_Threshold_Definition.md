@@ -280,9 +280,6 @@ following Group 1 Requirements Guidelines.
   They should be treated as starting hypotheses, not proven standards.
 - The AI may have missed lateral conflicts between requirements.
   Human review should specifically check Section 4 for completeness.
-- Sophie's persona was excluded from primary evidence per the human
-  evaluation judgment. The AI correctly applied this exclusion but a
-  human should confirm this was the right call for onboarding scope.
 
 ---
 
