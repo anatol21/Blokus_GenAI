@@ -561,15 +561,32 @@ class StaticAnalyzer:
                 text=True,
                 timeout=self.config.provider.timeout_seconds,
             )
+            # Truncate stdout/stderr to bounded sizes to prevent OOM
+            max_output = _MAX_JSON_TOOL_OUTPUT_CHARS + 10_000  # Buffer for truncation marker
+            stdout = completed.stdout
+            stderr = completed.stderr
+            
+            if len(stdout) > max_output:
+                stdout = stdout[:max_output] + "\n... [output truncated for scale]\n"
+            
+            if len(stderr) > max_output:
+                stderr = stderr[:max_output] + "\n... [output truncated for scale]\n"
+            
             return ToolRun(
                 command=" ".join(args),
                 returncode=completed.returncode,
-                stdout=completed.stdout,
-                stderr=completed.stderr,
+                stdout=stdout,
+                stderr=stderr,
             )
         except subprocess.TimeoutExpired as exc:
             stdout = _coerce_stream_text(exc.stdout)
             stderr = _coerce_stream_text(exc.stderr)
+            # Also truncate timeout output
+            max_output = _MAX_JSON_TOOL_OUTPUT_CHARS + 10_000
+            if len(stdout) > max_output:
+                stdout = stdout[:max_output] + "\n... [output truncated for scale]\n"
+            if len(stderr) > max_output:
+                stderr = stderr[:max_output] + "\n... [output truncated for scale]\n"
             return ToolRun(
                 command=" ".join(args),
                 returncode=124,

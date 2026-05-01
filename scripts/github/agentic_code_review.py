@@ -8,25 +8,19 @@ import json
 import os
 from pathlib import Path
 import sys
-from typing import Any
+
+# Module-level placeholders for lazy imports (required for test patching)
+load_review_config = None  # type: ignore
+ReviewCoordinator = None  # type: ignore
+GitHubClient = None  # type: ignore
+load_event_payload = None  # type: ignore
+COMMENT_MARKERS = None  # type: ignore
 
 
 def main() -> int:
     """Main entry point - sets up import path and runs review."""
-    # Set up import path first
-    _setup_import_path()
-    
-    # Now import the modules that depend on the custom path
-    import blokus.automation as _blokus_automation
-    import blokus.review.config as _review_config
-    import blokus.review.coordinator as _review_coordinator
-    import scripts.github.gh_helpers as _gh_helpers
-    
-    COMMENT_MARKERS = _blokus_automation.COMMENT_MARKERS
-    load_review_config = _review_config.load_review_config
-    ReviewCoordinator = _review_coordinator.ReviewCoordinator
-    GitHubClient = _gh_helpers.GitHubClient
-    load_event_payload = _gh_helpers.load_event_payload
+    # Lazy-load dependencies to avoid import-time side effects
+    _lazy_imports()
     
     args = _parse_args()
     repo_root = _resolve_repo_root()
@@ -67,10 +61,39 @@ def main() -> int:
     return 0 if run.result.verdict == "LGTM" else 1
 
 
+def _lazy_imports() -> None:
+    """Lazy-load dependencies at runtime to avoid import-time side effects.
+    
+    This allows tests to patch module-level attributes before main() runs.
+    """
+    global load_review_config, ReviewCoordinator, GitHubClient, load_event_payload, COMMENT_MARKERS
+    
+    _setup_import_path()
+    
+    if load_review_config is None:
+        import blokus.review.config as rc
+        load_review_config = rc.load_review_config
+    
+    if ReviewCoordinator is None:
+        import blokus.review.coordinator as rco
+        ReviewCoordinator = rco.ReviewCoordinator
+    
+    if GitHubClient is None or load_event_payload is None:
+        import scripts.github.gh_helpers as gh
+        if GitHubClient is None:
+            GitHubClient = gh.GitHubClient
+        if load_event_payload is None:
+            load_event_payload = gh.load_event_payload
+    
+    if COMMENT_MARKERS is None:
+        import blokus.automation as auto
+        COMMENT_MARKERS = auto.COMMENT_MARKERS
+
+
 def _setup_import_path() -> None:
     """Add repository paths to sys.path for imports.
     
-    This is called from main() to avoid side effects at import time.
+    This is called from _lazy_imports() to avoid side effects at import time.
     """
     repo_root = Path(__file__).resolve().parents[2]
     src_root = repo_root / "src"
