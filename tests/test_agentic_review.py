@@ -381,6 +381,20 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertIsNotNone(block)
         self.assertTrue(cast(review_diff._PatchBlock, block).performance_sensitive)
 
+    def test_patch_accumulator_rechecks_path_markers_when_path_arrives_late(self) -> None:
+        accumulator = review_diff._PatchAccumulator(_make_config(REPO_ROOT))
+        for line in (
+            "@@ -0,0 +1,1 @@",
+            "+++ b/src/blokus/engine.py",
+            "+value = 1",
+        ):
+            accumulator.add_line(line)
+
+        block = accumulator.build()
+
+        self.assertIsNotNone(block)
+        self.assertTrue(cast(review_diff._PatchBlock, block).performance_sensitive)
+
     def test_patch_accumulator_hard_caps_large_diff_analysis(self) -> None:
         config = _make_config(REPO_ROOT)
 
@@ -2017,7 +2031,7 @@ class AgenticReviewTests(unittest.TestCase):
             self.assertEqual((Path(tmpdir) / "review.md").read_text(encoding="utf-8"), "## Agentic Code Review\n")
             client_cls.return_value.upsert_issue_comment.assert_called_once()
 
-    def test_script_main_uses_environment_overrides_and_discuss_exits_nonzero(self) -> None:
+    def test_script_main_uses_environment_overrides_and_discuss_is_non_blocking(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/review/diff.py", line_start=8, line_end=8), same_repo=False)
         result = ReviewResult(
@@ -2078,7 +2092,7 @@ class AgenticReviewTests(unittest.TestCase):
             coordinator_cls.return_value.run.return_value = run
             exit_code = agentic_code_review.main()
 
-            self.assertEqual(exit_code, 1)
+            self.assertEqual(exit_code, 0)
             self.assertEqual(
                 coordinator_cls.return_value.run.call_args.kwargs,
                 {
@@ -3004,7 +3018,7 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(result, "LGTM")
         self.assertEqual(urlopen_mock.call_count, 2)
-        sleep_mock.assert_called_once_with(1)
+        sleep_mock.assert_called_once_with(1, retryable_error)
 
     def test_openrouter_client_does_not_retry_nonretryable_http_errors(self) -> None:
         client = OpenRouterClient(
@@ -3030,6 +3044,37 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(urlopen_mock.call_count, 1)
         sleep_mock.assert_not_called()
+
+    def test_sleep_before_retry_honors_retry_after_for_rate_limits(self) -> None:
+        retryable_error = HTTPError(
+            "https://openrouter.example/chat/completions",
+            429,
+            "rate limited",
+            hdrs=Message(),
+            fp=None,
+        )
+        retryable_error.headers["Retry-After"] = "7"
+
+        with mock.patch("blokus.review.provider.time.sleep") as sleep_mock:
+            from blokus.review import provider as review_provider
+
+            review_provider._sleep_before_retry(1, retryable_error)
+
+        sleep_mock.assert_called_once_with(7.0)
+
+    def test_retry_delay_uses_exponential_backoff_for_rate_limits_without_retry_after(self) -> None:
+        retryable_error = HTTPError(
+            "https://openrouter.example/chat/completions",
+            429,
+            "rate limited",
+            hdrs=Message(),
+            fp=None,
+        )
+
+        from blokus.review import provider as review_provider
+
+        self.assertEqual(review_provider._retry_delay_seconds(1, retryable_error), 2.0)
+        self.assertEqual(review_provider._retry_delay_seconds(4, retryable_error), 16.0)
 
     def test_openrouter_client_retries_invalid_json_response(self) -> None:
         client = OpenRouterClient(

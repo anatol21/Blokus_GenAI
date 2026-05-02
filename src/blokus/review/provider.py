@@ -7,6 +7,8 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -81,7 +83,7 @@ class OpenRouterClient:
                 last_error = exc
                 if attempt >= attempt_count or not _is_retryable_http_error(exc):
                     raise ProviderUnavailable(f"OpenRouter request failed: {exc}") from exc
-                _sleep_before_retry(attempt)
+                _sleep_before_retry(attempt, exc)
             except (URLError, TimeoutError) as exc:
                 last_error = exc
                 if attempt >= attempt_count:
@@ -184,5 +186,40 @@ def _is_retryable_http_error(error: HTTPError) -> bool:
     return error.code in {408, 425, 429, 500, 502, 503, 504}
 
 
-def _sleep_before_retry(attempt: int) -> None:
-    time.sleep(min(0.25 * attempt, 1.0))
+def _sleep_before_retry(attempt: int, error: HTTPError | None = None) -> None:
+    time.sleep(_retry_delay_seconds(attempt, error))
+
+
+def _retry_delay_seconds(attempt: int, error: HTTPError | None = None) -> float:
+    if error is not None and error.code == 429:
+        retry_after = _retry_after_seconds(getattr(error, "headers", None))
+        if retry_after is not None:
+            return retry_after
+        return min(float(2**attempt), 30.0)
+    return min(0.25 * attempt, 1.0)
+
+
+def _retry_after_seconds(headers: object) -> float | None:
+    if headers is None or not hasattr(headers, "get"):
+        return None
+
+    raw_value = headers.get("Retry-After")
+    if isinstance(raw_value, (int, float)):
+        return max(0.0, float(raw_value))
+    if not isinstance(raw_value, str):
+        return None
+
+    stripped = raw_value.strip()
+    if not stripped:
+        return None
+    try:
+        return max(0.0, float(stripped))
+    except ValueError:
+        pass
+    try:
+        retry_at = parsedate_to_datetime(stripped)
+    except (TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())

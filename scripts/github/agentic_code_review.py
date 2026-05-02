@@ -75,7 +75,7 @@ def main() -> int:
             )
 
     print(run.markdown)
-    return 0 if run.result.verdict == "LGTM" else 1
+    return 1 if run.result.verdict == "NEEDS CHANGES" else 0
 
 
 def _lazy_imports() -> None:
@@ -85,7 +85,7 @@ def _lazy_imports() -> None:
     """
     global load_review_config, ReviewCoordinator, GitHubClient, load_event_payload, COMMENT_MARKERS
 
-    _setup_import_path()
+    _setup_import_path(_resolve_repo_root())
 
     if load_review_config is None:
         import blokus.review.config as rc
@@ -142,12 +142,11 @@ def _initialized_lazy_imports() -> tuple[
     )
 
 
-def _setup_import_path() -> None:
+def _setup_import_path(repo_root: Path) -> None:
     """Add repository paths to sys.path for imports.
 
     This is called from _lazy_imports() to avoid side effects at import time.
     """
-    repo_root = Path(__file__).resolve().parents[2]
     src_root = repo_root / "src"
     desired_prefix = [str(src_root), str(repo_root)]
     for import_root in desired_prefix:

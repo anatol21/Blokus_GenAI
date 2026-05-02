@@ -127,7 +127,15 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertIsNotNone(agentic_code_review.COMMENT_MARKERS)
             self.assertIn(repo_root, sys.path)
             self.assertIn(src_root, sys.path)
-            self.assertLess(sys.path.index(src_root), sys.path.index(repo_root))
+
+    def test_setup_import_path_uses_supplied_repo_root(self) -> None:
+        custom_root = Path("/tmp/custom-workspace-root")
+        expected_prefix = [str(custom_root / "src"), str(custom_root)]
+
+        with mock.patch.object(sys, "path", ["existing-entry"]):
+            agentic_code_review._setup_import_path(custom_root)
+
+            self.assertEqual(sys.path[:2], expected_prefix)
 
     def test_main_raises_when_lazy_imports_remain_uninitialized(self) -> None:
         with mock.patch.object(
@@ -361,9 +369,47 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
                 run.markdown,
             )
 
-    def test_main_fails_non_lgtm_and_skips_comment_for_forks(self) -> None:
+    def test_main_allows_discuss_and_skips_comment_for_forks(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=False, verdict="DISCUSS")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "GitHubClient",
+        ) as client_cls, mock.patch.dict(
+            os.environ,
+            {"GITHUB_EVENT_PATH": ""},
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((Path(tmpdir) / "review.json").exists())
+            self.assertTrue((Path(tmpdir) / "review.md").exists())
+            client_cls.assert_not_called()
+
+    def test_main_fails_needs_changes(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=False, verdict="NEEDS CHANGES")
 
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
             agentic_code_review,

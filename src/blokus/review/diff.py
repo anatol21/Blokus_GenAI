@@ -205,9 +205,10 @@ class _PatchAccumulator:
         # Check path markers once when path is known
         if not self._path_markers_checked:
             path = self.new_path or self.old_path
-            if path and any(marker in path for marker in self.config.performance.path_markers):
-                self.performance_sensitive = True
-            self._path_markers_checked = True
+            if path:
+                if any(marker in path for marker in self.config.performance.path_markers):
+                    self.performance_sensitive = True
+                self._path_markers_checked = True
 
     def _append_bounded(self, line: str) -> None:
         if self.patch_truncated:
@@ -600,4 +601,3 @@ def _git_output(repo_root: Path, args: list[str]) -> str:
 def _git_lines(repo_root: Path, args: list[str]) -> list[str]:
     output = _git_output(repo_root, args)
     return [line for line in output.splitlines() if line.strip()]
-
