@@ -31,6 +31,7 @@ def new_game(
         remaining_pieces={player: set(PIECE_IDS) for player in config.players},
         controller_types=controller_types,
         controller_strategies=controller_strategies,
+        occupied_cells={player: set() for player in config.players},
     )
 
 
@@ -43,19 +44,30 @@ def board_in_bounds(state: GameState, x: int, y: int) -> bool:
 def get_occupied_cells(state: GameState, player: str | None = None) -> set[Coordinate]:
     """Collect occupied coordinates, optionally filtering to one player."""
 
+    if state.occupied_cells is None:
+        # Defensive fallback for manually-constructed states.
+        occupied: set[Coordinate] = set()
+        for y, row in enumerate(state.board):
+            for x, cell in enumerate(row):
+                if cell is None:
+                    continue
+                if player is None or cell == player:
+                    occupied.add((x, y))
+        return occupied
+
+    if player is not None:
+        return state.occupied_cells.get(player, set())
     occupied: set[Coordinate] = set()
-    for y, row in enumerate(state.board):
-        for x, cell in enumerate(row):
-            if cell is None:
-                continue
-            if player is None or cell == player:
-                occupied.add((x, y))
+    for cells in state.occupied_cells.values():
+        occupied.update(cells)
     return occupied
 
 
 def is_first_move(state: GameState, player: str) -> bool:
     """Return whether the player has not yet placed any piece."""
 
+    if state.occupied_cells is not None:
+        return not state.occupied_cells.get(player)
     return not any(cell == player for row in state.board for cell in row)
 
 
@@ -252,6 +264,8 @@ def apply_move(state: GameState, move: Move) -> GameState:
     # Materialize the piece on the cloned board before advancing turn metadata.
     for x, y in cells:
         new_state.board[y][x] = move.player
+    if new_state.occupied_cells is not None:
+        new_state.occupied_cells[move.player].update(cells)
     new_state.remaining_pieces[move.player].remove(move.piece)
     new_state.history.append(move)
     new_state.current_player_index = _next_player_index(new_state)
@@ -313,6 +327,9 @@ def compute_scores(state: GameState) -> dict[str, int]:
 
 
 def occupied_square_counts(state: GameState) -> dict[str, int]:
+    if state.occupied_cells is not None:
+        return {player: len(state.occupied_cells.get(player, set())) for player in state.players}
+
     counts = {player: 0 for player in state.players}
     for row in state.board:
         for cell in row:

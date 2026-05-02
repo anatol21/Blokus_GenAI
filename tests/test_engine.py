@@ -5,6 +5,7 @@ from blokus.engine import (
     compute_scores,
     list_legal_moves,
     new_game,
+    occupied_square_counts,
     pass_turn,
     score_player,
     validate_move,
@@ -68,6 +69,8 @@ class EngineRuleTests(unittest.TestCase):
         self.assertEqual(len(next_state.history), 1)
         self.assertNotIn("I1", next_state.remaining_pieces["blue"])
         self.assertEqual(next_state.board[0][0], "blue")
+        self.assertIsNotNone(next_state.occupied_cells)
+        self.assertIn((0, 0), next_state.occupied_cells["blue"])
 
     def test_pass_requires_player_to_be_blocked(self) -> None:
         state = new_game()
@@ -154,6 +157,28 @@ class EngineRuleTests(unittest.TestCase):
         }
         self.assertEqual(len(moves), len(placements))
         self.assertTrue(all(validate_move(state, move).ok for move in moves))
+
+    def test_occupied_cache_tracks_board_state(self) -> None:
+        state = new_game()
+        self.assertIsNotNone(state.occupied_cells)
+        for player in state.players:
+            self.assertEqual(state.occupied_cells[player], set())
+
+        state = apply_move(state, Move("blue", "I1", 0, 0))
+        self.assertIn((0, 0), state.occupied_cells["blue"])
+        self.assertEqual(occupied_square_counts(state)["blue"], 1)
+
+        state = apply_move(state, Move("yellow", "I1", 19, 0))
+        self.assertIn((19, 0), state.occupied_cells["yellow"])
+        self.assertEqual(
+            occupied_square_counts(state),
+            {
+                "blue": 1,
+                "yellow": 1,
+                "red": 0,
+                "green": 0,
+            },
+        )
 
     def test_list_legal_moves_respects_zero_limit(self) -> None:
         state = new_game()
