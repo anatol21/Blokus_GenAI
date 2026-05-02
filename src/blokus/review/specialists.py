@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from functools import cached_property
 from pathlib import PurePosixPath
 
 from blokus.review.config import ReviewConfig
@@ -34,9 +33,14 @@ class SpecialistRunner:
     provider: OpenRouterClient
     _specialist_prompt_cache: dict[str, str] = field(default_factory=dict, init=False, repr=False, compare=False)
 
-    @cached_property
+    @property
     def _common_prompt(self) -> str:
-        return load_prompt(self.config, "review-common")
+        cached = self._specialist_prompt_cache.get("__common__")
+        if cached is None:
+            cached = load_prompt(self.config, "review-common")
+            self._specialist_prompt_cache["__common__"] = cached
+        return cached
+
 
     def run(
         self,

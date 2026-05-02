@@ -2463,13 +2463,13 @@ class AgenticReviewTests(unittest.TestCase):
             run_mock.return_value = subprocess.CompletedProcess(args=["python"], returncode=0, stdout="", stderr="")
             analyzer._run_command(["python", "-V"])
 
-        self.assertEqual(run_mock.call_args.kwargs["timeout"], config.provider.timeout_seconds)
+        self.assertEqual(run_mock.call_args.kwargs["timeout"], config.provider.tool_timeout_seconds)
 
     def test_static_analyzer_run_command_handles_timeout(self) -> None:
         config = _make_config(REPO_ROOT)
         analyzer = StaticAnalyzer(config)
 
-        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["python"], config.provider.timeout_seconds)):
+        with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(["python"], config.provider.tool_timeout_seconds)):
             tool_run = analyzer._run_command(["python", "-V"])
 
         self.assertEqual(tool_run.returncode, 124)
@@ -3341,7 +3341,7 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(summary.test_posture, "review_recommended")
 
     def test_test_posture_is_adequate_when_tests_changed(self) -> None:
-        """Test posture should be 'adequate' when tests are changed."""
+        """Test posture should be 'unknown' when only test files are changed."""
         config = _make_config(REPO_ROOT)
         coordinator = ReviewCoordinator(config)
         # Change a test file

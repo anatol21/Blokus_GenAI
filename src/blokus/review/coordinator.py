@@ -550,6 +550,8 @@ _NON_BLOCKING_UNCERTAIN_RISKS = {
     "Diff context was truncated for scale.",
     "Diff analysis was truncated for scale.",
     "Commit or file-list context was truncated for scale.",
+    "The shared review prompt asset was unavailable.",
+    "A specialist prompt asset was unavailable.",
 }
 
 

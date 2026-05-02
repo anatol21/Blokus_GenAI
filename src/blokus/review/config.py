@@ -24,6 +24,7 @@ class ProviderConfig:
     base_url: str
     timeout_seconds: int
     max_retries: int
+    tool_timeout_seconds: int = 120
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,8 @@ class ReviewConfig:
             )
         if self.provider.timeout_seconds <= 0:
             raise ValueError("Review provider `timeout_seconds` must be greater than 0.")
+        if self.provider.tool_timeout_seconds <= 0:
+            raise ValueError("Review provider `tool_timeout_seconds` must be greater than 0.")
         if not self.provider.base_url or not self.provider.base_url.strip():
             raise ValueError("Review provider `base_url` must be non-empty.")
         if not self.provider.base_url.startswith(("http://", "https://")):
@@ -136,6 +139,7 @@ def load_review_config(path: str | Path | None = None, *, repo_root: str | Path 
                 base_url=str(provider_block["base_url"]),
                 timeout_seconds=int(provider_block["timeout_seconds"]),
                 max_retries=int(provider_block["max_retries"]),
+                tool_timeout_seconds=int(provider_block.get("tool_timeout_seconds", provider_block["timeout_seconds"])),
             ),
             performance=PerformanceConfig(
                 path_markers=_coerce_str_list(performance_block["path_markers"], "performance.path_markers", config_path),

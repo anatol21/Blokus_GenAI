@@ -477,19 +477,23 @@ class StaticAnalyzer:
             changed_file = shell_by_path.get(path)
             if changed_file is None or not changed_file.touches_line(line_number):
                 continue
+            code = comment.get("code")
+            message = comment.get("message")
+            if code is None or message is None:
+                continue
             level = str(comment.get("level", "warning"))
             severity = "high" if level == "error" else "moderate"
             findings.append(
                 Finding(
-                    id=stable_finding_id("shellcheck", path, line_number, comment["code"]),
-                    title=f"ShellCheck {comment['code']}",
+                    id=stable_finding_id("shellcheck", path, line_number, code),
+                    title=f"ShellCheck {code}",
                     severity=severity,
                     confidence="high",
                     category="static-analysis",
                     file=path,
                     line_start=line_number,
                     line_end=line_number,
-                    evidence=f"`shellcheck` reported `{comment['code']}` on a changed line: {comment['message']}",
+                    evidence=f"`shellcheck` reported `{code}` on a changed line: {message}",
                     impact="The changed shell script includes a shell correctness issue that can break execution or make behavior brittle.",
                     suggested_action="Address the ShellCheck diagnostic and rerun the shell checks.",
                     blocking_recommendation=severity == "high",
@@ -660,7 +664,7 @@ class StaticAnalyzer:
                     cwd=self.config.repo_root,
                     stdout=stdout_file,
                     stderr=stderr_file,
-                    timeout=self.config.provider.timeout_seconds,
+                    timeout=self.config.provider.tool_timeout_seconds,
                 )
                 return ToolRun(
                     command=" ".join(args),
@@ -675,7 +679,7 @@ class StaticAnalyzer:
                     stdout=_read_bounded_tool_output(stdout_file),
                     stderr=(
                         _read_bounded_tool_output(stderr_file)
-                        + f"\nCommand timed out after {self.config.provider.timeout_seconds} seconds."
+                        + f"\nCommand timed out after {self.config.provider.tool_timeout_seconds} seconds."
                     ),
                 )
 

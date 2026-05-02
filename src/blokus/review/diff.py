@@ -514,12 +514,6 @@ def _optional_int(value: object, default: int | None) -> int | None:
         return default
 
 
-def _is_performance_sensitive(config: ReviewConfig, path: str, patch: str) -> bool:
-    if any(marker in path for marker in config.performance.path_markers):
-        return True
-
-    return any(marker in patch for marker in config.performance.diff_markers)
-
 
 def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:
     if not changed_files:
@@ -607,6 +601,3 @@ def _git_lines(repo_root: Path, args: list[str]) -> list[str]:
     output = _git_output(repo_root, args)
     return [line for line in output.splitlines() if line.strip()]
 
-
-def _render_patch_block(changed_file: ChangedFile) -> str:
-    return f"File: {changed_file.path}\n```diff\n{changed_file.patch.strip()}\n```"
