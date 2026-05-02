@@ -65,6 +65,20 @@ class EngineRuleTests(unittest.TestCase):
         for player in state.players:
             self.assertEqual(state.remaining_pieces[player], set(PIECE_IDS))
 
+    def test_clone_deep_copies_occupied_cells_by_player_sets(self) -> None:
+        state = new_game()
+        state.occupied_cells_by_player["blue"].add((0, 0))
+
+        cloned = state.clone()
+        self.assertIsNot(
+            state.occupied_cells_by_player["blue"],
+            cloned.occupied_cells_by_player["blue"],
+        )
+
+        cloned.occupied_cells_by_player["blue"].add((1, 1))
+        self.assertEqual(state.occupied_cells_by_player["blue"], {(0, 0)})
+        self.assertEqual(cloned.occupied_cells_by_player["blue"], {(0, 0), (1, 1)})
+
     def test_same_color_edge_contact_is_illegal(self) -> None:
         state = play_standard_opening_cycle()
         result = validate_move(state, Move("blue", "I2", 1, 0))

@@ -22,6 +22,15 @@ class SerializationTests(unittest.TestCase):
         state = GameState.from_dict(payload)
         self.assertEqual(state.to_dict(), payload)
 
+    def test_state_to_dict_excludes_occupied_cells_by_player(self) -> None:
+        state = new_game()
+        payload = state.to_dict()
+        self.assertNotIn("occupied_cells_by_player", payload)
+
+        # Deserialization should not require derived cache fields.
+        reloaded = GameState.from_dict(payload)
+        self.assertEqual(set(reloaded.occupied_cells_by_player.keys()), set(reloaded.players))
+
     def test_state_round_trip_after_moves(self) -> None:
         state = new_game(
             controllers={"blue": "computer", "yellow": "human", "red": "human", "green": "human"},

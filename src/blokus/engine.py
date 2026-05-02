@@ -23,7 +23,9 @@ def new_game(
     controller_strategies = {
         player: (strategies or {}).get(player, "default") for player in config.players
     }
-    occupied_cells_by_player = {player: set() for player in config.players}
+    occupied_cells_by_player: dict[str, set[Coordinate]] = {
+        player: set[Coordinate]() for player in config.players
+    }
     return GameState(
         mode=mode,
         board=board,

@@ -76,7 +76,7 @@ class GameState:
     def __post_init__(self) -> None:
         # Ensure every configured player has a cache entry.
         for player in self.players:
-            self.occupied_cells_by_player.setdefault(player, set())
+            self.occupied_cells_by_player.setdefault(player, set[Coordinate]())
 
     @property
     def board_size(self) -> int:
