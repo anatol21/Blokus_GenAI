@@ -109,6 +109,70 @@ class EngineRuleTests(unittest.TestCase):
         self.assertNotIn("I1", next_state.remaining_pieces["blue"])
         self.assertEqual(next_state.board[0][0], "blue")
 
+    def test_apply_move_adds_placed_cells_to_occupied_cells_cache(self) -> None:
+        state = new_game()
+        move = Move("blue", "I2", 0, 0)
+
+        next_state = apply_move(state, move)
+
+        board_cells = {
+            (x, y)
+            for y, row in enumerate(next_state.board)
+            for x, cell in enumerate(row)
+            if cell == "blue"
+        }
+        self.assertEqual(next_state.occupied_cells_by_player["blue"], board_cells)
+
+        # Existing board behavior still matches the applied move.
+        self.assertEqual(board_cells, {(0, 0), (1, 0)})
+
+    def test_apply_move_does_not_mutate_original_state_cache(self) -> None:
+        state = new_game()
+        move = Move("blue", "I2", 0, 0)
+
+        _ = apply_move(state, move)
+
+        # Original state remains unchanged.
+        self.assertEqual(state.occupied_cells_by_player["blue"], set())
+        self.assertTrue(all(cell is None for row in state.board for cell in row))
+
+    def test_apply_move_does_not_update_other_players_cache_sets(self) -> None:
+        state = new_game()
+        move = Move("blue", "I2", 0, 0)
+
+        next_state = apply_move(state, move)
+
+        for player in next_state.players:
+            if player == "blue":
+                continue
+            self.assertEqual(next_state.occupied_cells_by_player[player], set())
+
+    def test_apply_move_illegal_move_raises_and_does_not_mutate_board_or_cache(self) -> None:
+        state = new_game()
+        # Add a sentinel to ensure we detect cache mutation (cache is derived and not serialized).
+        state.occupied_cells_by_player["blue"].add((5, 5))
+        before_board = [row[:] for row in state.board]
+        before_cache = {player: set(cells) for player, cells in state.occupied_cells_by_player.items()}
+
+        with self.assertRaisesRegex(ValueError, "must cover start corner"):
+            apply_move(state, Move("blue", "I1", 1, 1))
+
+        self.assertEqual(state.board, before_board)
+        self.assertEqual(state.occupied_cells_by_player, before_cache)
+
+    def test_occupied_cells_cache_accumulates_and_matches_board_per_player(self) -> None:
+        state = play_standard_opening_cycle()
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        for player in state.players:
+            board_cells = {
+                (x, y)
+                for y, row in enumerate(state.board)
+                for x, cell in enumerate(row)
+                if cell == player
+            }
+            self.assertEqual(state.occupied_cells_by_player[player], board_cells)
+
     def test_pass_requires_player_to_be_blocked(self) -> None:
         state = new_game()
         with self.assertRaisesRegex(ValueError, "only pass when no legal move exists"):
