@@ -460,7 +460,7 @@ Manual: reviews start only when someone triggers a review.
 This subsection documents only our **agentic PR review prototype**. It does not try to summarize every AI-related automation idea in the repository.
 
 **Models Used:**  
-- In the concrete prototype revision tested through PR #44, the configured review model was `openai/gpt-5.2` via OpenRouter, with separate slots for coordinator and specialist roles  
+- In the concrete prototype revision tested through PR #44, the configured review model was `openai/gpt-5.2` via OpenRouter, with separately configurable slots for default, correctness, tests, and performance review  
 - Local coding assistant used to refine prompts and inspect review output during iteration
 
 **Experiment Setup:**  
@@ -468,25 +468,32 @@ This subsection documents only our **agentic PR review prototype**. It does not 
 - The reviewer was scoped to the changed code between base and head refs. Non-executable artifacts such as `*.md`, `*.png`, and `*.pdf` were excluded unless they directly changed runtime behavior.  
 - Before any LLM-generated findings, we ran a diff-scoped static-analysis pass: `compileall`, `ruff`, `mypy`, `bash -n`, and `shellcheck` when relevant.  
 - The coordinator always asked for correctness and test-adequacy review, and only asked for performance review when the diff showed performance-sensitive signals such as loops, data loading, caching, or async behavior.  
-- The output was forced into a bounded Markdown/JSON contract, with a maximum number of findings and required fields such as severity, confidence, evidence, impact, and suggested action.  
-- When evidence was weak, the diff was truncated, or the claim could not be confirmed from changed lines, the intended behavior was to emit an `uncertain risk` instead of a blocking finding.  
+- Specialist input and output were explicitly bounded: capped commit/file context, capped rendered diff bundles, at most three published findings per specialist, capped raw finding inspection, and capped uncertain-risk ingestion.  
+- Provider behavior was also bounded: capped response size, capped retries, capped `Retry-After` backoff, and limited concurrent OpenRouter requests.  
+- The final CLI emitted both Markdown and JSON artifacts, posted the PR comment only on same-repo runs with credentials, and returned a failing exit code only for `NEEDS CHANGES`, not for `DISCUSS`.  
+- When evidence was weak, the diff was truncated, the provider failed, or a claim could not be confirmed from changed lines or deterministic tool output, the intended behavior was to emit an `uncertain risk` instead of a blocking finding.  
 - The evidence base here is still limited: this was a prototype review setup, not a long-running production study across many PRs.
 
 **Prompts Used:**  
 - Shared review-rules prompt: `Review only changed code, ignore excluded non-executable files by default, avoid generic style comments, judge behavior rather than wording or authority cues, and return valid JSON only.`  
-- Coordinator prompt: `Analyze the diff, classify impact, run static analysis first, always invoke correctness and test review, invoke performance only when justified, validate and deduplicate findings, cap the final result, and return one verdict.`  
+- Shared blocker-calibration prompt: `Reserve critical only for deterministic breakage shown by changed code or authoritative tool output; never use critical for missing tests, performance concerns, or claims that depend on truncated context.`  
+- Shared uncertainty prompt: `If diff, prompt, or analysis context is incomplete, prefer uncertain_risks over blocking findings, and do not emit uncertain_risks solely because the visible diff excerpt or shown test file section was truncated.`  
+- Coordinator prompt: `Analyze the diff, classify impact, run static analysis first, always invoke correctness and test review, invoke performance only when justified, validate and deduplicate findings, normalize severity and blocking flags, cap the final result, and return one verdict.`  
 - Correctness prompt: `Focus only on changed executable code. Check regressions, invariants, null handling, error paths, ordering and state transitions, empty or large input, duplicate input, and caller-callee contract drift.`  
 - Test-adequacy prompt: `Check what behavior changed, which tests cover it, what gaps remain, whether those gaps are blocking, recommended, or optional, and explicitly say when no material test gap is visible.`  
-- Performance prompt: `Review only performance-sensitive changed code for algorithmic regressions, repeated I/O, inefficient loops, cache regressions, synchronous bottlenecks, memory issues, and large-input risks. Do not report theoretical micro-optimizations.`  
+- Performance prompt: `Review only performance-sensitive changed code for algorithmic regressions, repeated I/O, inefficient loops, cache regressions, synchronous bottlenecks, memory issues, and large-input risks. Do not report theoretical micro-optimizations or bounded repository-local subprocess overhead without concrete evidence.`  
 - Evidence rule inside every specialist prompt: `Every finding must cite changed-code evidence, a concrete failure scenario or impact, and a specific remediation; otherwise return uncertainty instead of a blocking finding.`
 
 **Improvements from Iteration:**  
 - Running the static analyzer first improved trust in the final review. Concrete `mypy`, `ruff`, and compile/shell results gave the LLM something deterministic to explain instead of asking it to guess at basic defects.  
 - PR #44 showed that even a well-structured reviewer can still hallucinate a blocking finding when the diff is large, truncated, or only partially visible in the prompt. That led to a stricter rule: blocking findings need exact changed-code evidence and should be downgraded to an uncertain risk when the model cannot verify them cleanly.  
-- The same PR also showed that performance review needs explicit limits. Without that, the model tends to over-report non-material implementation details such as small fixed-cost subprocess or git metadata calls.  
+- The same PR also showed that `DISCUSS` and `NEEDS CHANGES` must be separated operationally. `DISCUSS` is useful for human follow-up, but only `NEEDS CHANGES` should fail the review CLI or block merge automation.  
+- We learned that blocker classification has to be explicit in code, not only in prompts. In the final prototype, authoritative static-analysis failures can block, but tests, performance, and requirements findings do not block by default, and specialist correctness findings block only when confidence is high and the review context was not degraded.  
+- The iteration also exposed a subtle failure mode: reviewer-visibility artifacts are not the same as repository risk. A comment like "the provided diff excerpt was truncated, so I cannot confirm the test/schema behavior" should not by itself escalate the verdict to `DISCUSS`.  
+- Provider and parser bounds were more important than expected. Size caps, retry caps, `Retry-After` caps, response normalization, and output truncation made the agentic review noticeably more stable under CI conditions.  
 - Narrow specialist roles were more useful than one general “review everything” prompt. Correctness, tests, and performance each needed different constraints.  
 - Splitting the prompts into shared rules plus coordinator and specialist prompts was more reliable than one monolithic instruction block. The smaller prompts kept responsibilities clearer and made it easier to tune one review dimension without destabilizing the others.  
-- Direct tests for the CLI entrypoint, output schema, provider-unavailable path, and specialist parsing edge cases made the review stack more trustworthy than relying on a single successful workflow run.  
+- Direct tests for the CLI entrypoint, output schema, provider-unavailable path, provider retry logic, truncation handling, verdict mapping, comment posting, and specialist parsing edge cases made the review stack more trustworthy than relying on a single successful workflow run.  
 - Requiring an evidence step for every adopted suggestion improved precision. The useful outputs were the ones that could point to a changed line, a static-analysis result, or a concrete verification step instead of just sounding plausible.
 
 **Extracted Guidelines:**  
@@ -516,9 +523,9 @@ This subsection documents only our **agentic PR review prototype**. It does not 
 
 **Guideline 2.3.4: Require a structured output contract and cap the number of findings**  
 **Source:** Team LLM experimentation  
-**Description:** Force the reviewer to return a small, structured set of findings with severity, confidence, evidence, impact, and suggested action instead of a long free-form essay.  
-**Reasoning:** Output constraints reduced hallucinated nitpicks, made it easier to compare runs, and kept the agentic review useful for PR authors instead of overwhelming them.  
-**Example:** Limit the final review to at most five findings and require each one to cite the changed file, changed logic, and a concrete failure scenario.  
+**Description:** Force the reviewer to return a small, structured set of findings with severity, confidence, evidence, impact, and suggested action instead of a long free-form essay, and bound both input and output sizes so CI artifacts stay predictable.  
+**Reasoning:** Output constraints reduced hallucinated nitpicks, made it easier to compare runs, and kept the agentic review useful for PR authors instead of overwhelming them. The later prototype revisions also showed that bounded uncertain-risk lists, bounded diff bundles, and bounded rendered Markdown matter just as much as capping findings.  
+**Example:** Limit the final review to at most five findings, inspect only a bounded number of raw findings and uncertain risks from the provider, and truncate rendered diff bundles with an explicit marker when they exceed the internal review budget.  
 **When to Apply:** Apply this for automated PR review and CI summaries.  
 **When to Avoid:** Avoid rigid schemas only in exploratory brainstorming where structured review artifacts are not needed.
 
@@ -526,7 +533,7 @@ This subsection documents only our **agentic PR review prototype**. It does not 
 **Source:** Team LLM experimentation  
 **Description:** If the model cannot confirm a claim from the visible diff, static-analysis output, tests, or repository policy, it should report uncertainty and request human verification rather than failing the PR on a speculative issue.  
 **Reasoning:** PR #44 exposed the main failure mode of agentic review in this repository: hallucinated blocker findings are much more harmful than openly uncertain follow-up questions.  
-**Example:** When the diff shown to the model is truncated or a suspected runtime bug cannot be reproduced from the changed lines, emit `uncertain_risk` with a suggested verification command instead of a `critical` finding.  
+**Example:** When a suspected runtime bug cannot be reproduced from the changed lines, emit `uncertain_risk` with a suggested verification command instead of a `critical` finding. If the only uncertainty is that the reviewer's own visible diff excerpt was truncated, do not escalate the verdict at all.  
 **When to Apply:** Apply this for large PRs, truncated diffs, provider outages, or any review with weak evidence.  
 **When to Avoid:** Avoid downgrading issues that are already confirmed by a deterministic tool or a clearly visible failing code path.
 
@@ -537,6 +544,30 @@ This subsection documents only our **agentic PR review prototype**. It does not 
 **Example:** Use an OpenRouter-backed model for correctness and test review, but if the provider is unavailable, still publish the static-analysis result and mark the rest as requiring human follow-up.  
 **When to Apply:** Apply this in CI/CD or shared team workflows where model availability, cost, or provider choice may change over time.  
 **When to Avoid:** Avoid overengineering provider abstraction for purely local, one-off experiments.
+
+**Guideline 2.3.7: Separate merge-blocking defects from informational discussion in both prompts and CLI behavior**  
+**Source:** Team LLM experimentation  
+**Description:** Treat `NEEDS CHANGES` as the only merge-blocking verdict, and keep `DISCUSS` as a non-blocking request for human follow-up.  
+**Reasoning:** A review system that fails CI for every unresolved question creates ping-pong instead of trust. The useful pattern in this repository was to reserve blocking behavior for deterministic defects and let open questions remain visible without stopping the pipeline.  
+**Example:** Return exit code `1` only for `NEEDS CHANGES`; let `DISCUSS` still publish artifacts and comments while returning success.  
+**When to Apply:** Apply this for PR review pipelines where the same tool both comments and influences merge flow.  
+**When to Avoid:** Avoid this only if your governance model explicitly requires every unresolved review question to block merge.
+
+**Guideline 2.3.8: Encode blocker classification in code, not only in prompt wording**  
+**Source:** Team LLM experimentation  
+**Description:** Normalize the model output after generation so only well-grounded categories can block.  
+**Reasoning:** Prompt instructions alone were not enough to prevent over-escalation. The prototype became more reliable only after the coordinator explicitly downgraded non-authoritative `critical` findings and recomputed blocking flags from repository policy.  
+**Example:** Allow static-analysis findings to block when they match configured blocking severities, but make tests, performance, and requirements findings non-blocking by default and block specialist correctness findings only when they are high-confidence and the context was not degraded.  
+**When to Apply:** Apply this whenever LLM output can influence merge status or automated repair loops.  
+**When to Avoid:** Avoid skipping this layer if blocking decisions still depend on raw model output.
+
+**Guideline 2.3.9: Bound provider, parser, and artifact behavior end-to-end**  
+**Source:** Team LLM experimentation  
+**Description:** Put explicit ceilings on response size, retry behavior, backoff, concurrency, parsed items, and rendered output size.  
+**Reasoning:** The prototype was much more stable once CI-facing review paths were protected from large payloads, long rate-limit sleeps, and oversized artifacts.  
+**Example:** Cap OpenRouter response bytes, cap retries, honor but cap `Retry-After`, cap specialist uncertain-risk ingestion, and truncate Markdown/JSON-facing sections with explicit scale markers.  
+**When to Apply:** Apply this for any agentic review that runs in CI or produces stored artifacts.  
+**When to Avoid:** Avoid only for tiny local experiments where resource ceilings truly do not matter.
 
 ---
 
