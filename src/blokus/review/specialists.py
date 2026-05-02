@@ -15,6 +15,7 @@ MAX_PROMPT_FILES = 80
 MAX_PROMPT_COMMITS = 25
 MAX_SPECIALIST_FINDINGS = 3
 MAX_SPECIALIST_FINDINGS_TO_INSPECT = 100
+MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT = 25
 MAX_UNMATCHED_PATH_UNCERTAIN_RISKS = 10
 
 
@@ -256,7 +257,8 @@ def _parse_specialist_response(
 
     uncertain_risks_value = data.get("uncertain_risks")
     raw_uncertain_risks = uncertain_risks_value if isinstance(uncertain_risks_value, list) else []
-    for item in raw_uncertain_risks:
+    uncertain_risks_were_truncated = len(raw_uncertain_risks) > MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT
+    for item in raw_uncertain_risks[:MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT]:
         if not isinstance(item, dict):
             continue
         if not all(key in item for key in ("risk", "reason_uncertain", "suggested_verification")):
@@ -266,6 +268,17 @@ def _parse_specialist_response(
                 risk=str(item["risk"]),
                 reason_uncertain=str(item["reason_uncertain"]),
                 suggested_verification=str(item["suggested_verification"]),
+            )
+        )
+    if uncertain_risks_were_truncated:
+        uncertain_risks.append(
+            UncertainRisk(
+                risk="Specialist uncertain risks were truncated for scale.",
+                reason_uncertain=(
+                    f"The specialist returned more than {MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT} uncertain risks, "
+                    f"so only the first {MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT} were kept."
+                ),
+                suggested_verification="Inspect the raw specialist output if the omitted uncertain risks may matter.",
             )
         )
 

@@ -68,9 +68,10 @@ def main() -> int:
         token = os.environ.get("GITHUB_TOKEN")
         if repository and token:
             client = github_client_cls(repository, token)
+            marker = comment_markers.get("agentic_review", "agentic-code-review")
             client.upsert_issue_comment(
                 run.context.pr.number,
-                comment_markers["agentic_review"],
+                marker,
                 run.markdown,
             )
 

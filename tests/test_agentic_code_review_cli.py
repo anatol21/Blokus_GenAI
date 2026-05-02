@@ -369,6 +369,54 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
                 run.markdown,
             )
 
+    def test_main_falls_back_to_default_comment_marker(self) -> None:
+        config = _make_config()
+        run = _make_run(same_repo=True, verdict="LGTM")
+
+        with tempfile.TemporaryDirectory() as tmpdir, mock.patch.object(
+            agentic_code_review,
+            "load_review_config",
+            return_value=config,
+        ), mock.patch.object(
+            agentic_code_review,
+            "ReviewCoordinator",
+        ) as coordinator_cls, mock.patch.object(
+            agentic_code_review,
+            "GitHubClient",
+        ) as client_cls, mock.patch.object(
+            agentic_code_review,
+            "COMMENT_MARKERS",
+            {},
+        ), mock.patch.dict(
+            os.environ,
+            {
+                "GITHUB_REPOSITORY": "owner/repo",
+                "GITHUB_TOKEN": "token",
+                "GITHUB_EVENT_PATH": "",
+            },
+            clear=False,
+        ), mock.patch.object(
+            sys,
+            "argv",
+            [
+                "agentic_code_review.py",
+                "--json-out",
+                str(Path(tmpdir) / "review.json"),
+                "--markdown-out",
+                str(Path(tmpdir) / "review.md"),
+            ],
+        ):
+            coordinator_cls.return_value.run.return_value = run
+
+            exit_code = agentic_code_review.main()
+
+            self.assertEqual(exit_code, 0)
+            client_cls.return_value.upsert_issue_comment.assert_called_once_with(
+                run.context.pr.number,
+                "agentic-code-review",
+                run.markdown,
+            )
+
     def test_main_allows_discuss_and_skips_comment_for_forks(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=False, verdict="DISCUSS")

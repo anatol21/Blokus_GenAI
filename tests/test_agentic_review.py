@@ -24,6 +24,7 @@ from blokus.review.diff import build_review_context, should_run_performance_revi
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
 from blokus.review.specialists import (
     MAX_PROMPT_FILES,
+    MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT,
     MAX_UNMATCHED_PATH_UNCERTAIN_RISKS,
     SpecialistRunner,
     _build_prompt_context_blocks,
@@ -1266,6 +1267,35 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(response.uncertain_risks, ())
 
+    def test_specialist_response_caps_uncertain_risks(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=22),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [],
+                    "uncertain_risks": [
+                        {
+                            "risk": f"Risk {index}",
+                            "reason_uncertain": "Payload is large.",
+                            "suggested_verification": "Inspect the raw provider output.",
+                        }
+                        for index in range(MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT + 2)
+                    ],
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(
+            len(response.uncertain_risks),
+            MAX_SPECIALIST_UNCERTAIN_RISKS_TO_INSPECT + 1,
+        )
+        self.assertEqual(
+            response.uncertain_risks[-1].risk,
+            "Specialist uncertain risks were truncated for scale.",
+        )
+
     def test_coordinator_discusses_when_provider_unavailable(self) -> None:
         config = _make_config(REPO_ROOT)
         context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
@@ -2040,6 +2070,18 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertTrue(normalized[0].blocking_recommendation)
         self.assertEqual(verdict, "NEEDS CHANGES")
+
+    def test_diff_excerpt_visibility_artifacts_do_not_force_discussion(self) -> None:
+        risk = UncertainRisk(
+            risk="Schema-shaped output may not be validated end-to-end against the new JSON Schema.",
+            reason_uncertain=(
+                "The provided diff is truncated, so it cannot be confirmed from the diff excerpt whether "
+                "tests/test_serialization.py covers the emitted payload."
+            ),
+            suggested_verification="Run the serialization tests.",
+        )
+
+        self.assertFalse(review_coordinator._requires_discussion(risk))
 
     def test_script_resolve_repo_root_is_independent_of_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(

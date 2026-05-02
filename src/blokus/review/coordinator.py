@@ -612,9 +612,22 @@ _NON_BLOCKING_UNCERTAIN_RISKS = {
 def _requires_discussion(risk: UncertainRisk) -> bool:
     if risk.risk in _NON_BLOCKING_UNCERTAIN_RISKS:
         return False
+    if _is_diff_excerpt_visibility_artifact(risk):
+        return False
     if risk.risk.endswith("specialist could not complete this run.") and "OpenRouter" in risk.reason_uncertain:
         return False
     return True
+
+
+def _is_diff_excerpt_visibility_artifact(risk: UncertainRisk) -> bool:
+    reason = risk.reason_uncertain.lower()
+    visibility_markers = ("provided diff", "diff excerpt", "visible portion of the diff")
+    if not any(marker in reason for marker in visibility_markers):
+        return False
+    return any(
+        marker in reason
+        for marker in ("truncat", "cannot be confirmed", "cannot be verified", "not shown", "not visible")
+    )
 
 
 def _fallback_review_context(

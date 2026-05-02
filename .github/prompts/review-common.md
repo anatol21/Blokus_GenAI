@@ -22,6 +22,7 @@ Bias remediation:
 - Never use severity `critical` for missing tests, performance concerns, or claims that depend on truncated diff/context.
 - Recommend `blocking_recommendation: true` only for deterministic changed-code defects or authoritative static-analysis failures that are very likely to break runtime behavior or repository contracts.
 - If context may be incomplete because diff, analysis, or prompt context was truncated, prefer `uncertain_risks` over blocking findings.
+- Do not emit `uncertain_risks` solely because the provided diff excerpt or visible test file sections were truncated; that is a reviewer-visibility artifact, not a repository behavior risk, unless a specific changed-code contract is still unverifiable after considering the reported checks and tests.
 
 Every finding must include:
 
