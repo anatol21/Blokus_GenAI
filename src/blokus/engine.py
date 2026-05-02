@@ -45,20 +45,20 @@ def board_in_bounds(state: GameState, x: int, y: int) -> bool:
 def get_occupied_cells(state: GameState, player: str | None = None) -> set[Coordinate]:
     """Collect occupied coordinates, optionally filtering to one player."""
 
-    occupied: set[Coordinate] = set()
-    for y, row in enumerate(state.board):
-        for x, cell in enumerate(row):
-            if cell is None:
-                continue
-            if player is None or cell == player:
-                occupied.add((x, y))
-    return occupied
+    # Read from the derived cache, but always return defensive copies so callers
+    # cannot mutate internal state.
+    if player is None:
+        occupied: set[Coordinate] = set()
+        for cells in state.occupied_cells_by_player.values():
+            occupied.update(cells)
+        return occupied
+    return set(state.occupied_cells_by_player.get(player, set()))
 
 
 def is_first_move(state: GameState, player: str) -> bool:
     """Return whether the player has not yet placed any piece."""
 
-    return not any(cell == player for row in state.board for cell in row)
+    return not state.occupied_cells_by_player.get(player, set())
 
 
 def _has_edge_contact_with_player(state: GameState, player: str, cells: tuple[Coordinate, ...]) -> bool:
@@ -319,9 +319,7 @@ def compute_scores(state: GameState) -> dict[str, int]:
 
 
 def occupied_square_counts(state: GameState) -> dict[str, int]:
-    counts = {player: 0 for player in state.players}
-    for row in state.board:
-        for cell in row:
-            if cell is not None:
-                counts[cell] += 1
-    return counts
+    return {
+        player: len(state.occupied_cells_by_player.get(player, set()))
+        for player in state.players
+    }
