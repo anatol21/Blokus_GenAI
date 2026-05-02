@@ -23,6 +23,7 @@ def new_game(
     controller_strategies = {
         player: (strategies or {}).get(player, "default") for player in config.players
     }
+    occupied_cells_by_player = {player: set() for player in config.players}
     return GameState(
         mode=mode,
         board=board,
@@ -31,6 +32,7 @@ def new_game(
         remaining_pieces={player: set(PIECE_IDS) for player in config.players},
         controller_types=controller_types,
         controller_strategies=controller_strategies,
+        occupied_cells_by_player=occupied_cells_by_player,
     )
 
 

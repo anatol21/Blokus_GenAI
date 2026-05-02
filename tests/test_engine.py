@@ -11,7 +11,7 @@ from blokus.engine import (
     validate_pass,
 )
 from blokus.models import Move
-from blokus.pieces import absolute_cells
+from blokus.pieces import PIECE_IDS, absolute_cells
 
 
 def play_standard_opening_cycle():
@@ -49,6 +49,21 @@ class EngineRuleTests(unittest.TestCase):
         result = validate_move(state, Move("yellow", "I1", 19, 0))
         self.assertFalse(result.ok)
         self.assertIn("It is blue's turn", result.reason)
+
+    def test_new_game_initializes_occupied_cells_by_player_cache(self) -> None:
+        state = new_game()
+
+        self.assertEqual(set(state.occupied_cells_by_player.keys()), set(state.players))
+        for player in state.players:
+            self.assertEqual(state.occupied_cells_by_player[player], set())
+
+        # Board remains empty.
+        self.assertTrue(all(cell is None for row in state.board for cell in row))
+
+        # Existing initialization behavior remains intact.
+        self.assertEqual(set(state.remaining_pieces.keys()), set(state.players))
+        for player in state.players:
+            self.assertEqual(state.remaining_pieces[player], set(PIECE_IDS))
 
     def test_same_color_edge_contact_is_illegal(self) -> None:
         state = play_standard_opening_cycle()
