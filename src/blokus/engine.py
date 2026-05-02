@@ -254,6 +254,8 @@ def apply_move(state: GameState, move: Move) -> GameState:
     # Materialize the piece on the cloned board before advancing turn metadata.
     for x, y in cells:
         new_state.board[y][x] = move.player
+    # Keep the derived occupied-cells cache consistent with the cloned board.
+    new_state.occupied_cells_by_player[move.player].update(cells)
     new_state.remaining_pieces[move.player].remove(move.piece)
     new_state.history.append(move)
     new_state.current_player_index = _next_player_index(new_state)
