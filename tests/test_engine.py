@@ -115,21 +115,16 @@ class EngineRuleTests(unittest.TestCase):
 
         next_state = apply_move(state, move)
 
-        expected_cells = set(
-            absolute_cells(
-                move.piece,
-                origin=(move.x, move.y),
-                rotation=move.rotation,
-                flipped=move.flipped,
-            )
-        )
-        self.assertEqual(next_state.occupied_cells_by_player["blue"], expected_cells)
+        board_cells = {
+            (x, y)
+            for y, row in enumerate(next_state.board)
+            for x, cell in enumerate(row)
+            if cell == "blue"
+        }
+        self.assertEqual(next_state.occupied_cells_by_player["blue"], board_cells)
 
         # Existing board behavior still matches the applied move.
-        for x, y in expected_cells:
-            self.assertEqual(next_state.board[y][x], "blue")
-        occupied_count = sum(1 for row in next_state.board for cell in row if cell is not None)
-        self.assertEqual(occupied_count, len(expected_cells))
+        self.assertEqual(board_cells, {(0, 0), (1, 0)})
 
     def test_apply_move_does_not_mutate_original_state_cache(self) -> None:
         state = new_game()
@@ -164,6 +159,19 @@ class EngineRuleTests(unittest.TestCase):
 
         self.assertEqual(state.board, before_board)
         self.assertEqual(state.occupied_cells_by_player, before_cache)
+
+    def test_occupied_cells_cache_accumulates_and_matches_board_per_player(self) -> None:
+        state = play_standard_opening_cycle()
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        for player in state.players:
+            board_cells = {
+                (x, y)
+                for y, row in enumerate(state.board)
+                for x, cell in enumerate(row)
+                if cell == player
+            }
+            self.assertEqual(state.occupied_cells_by_player[player], board_cells)
 
     def test_pass_requires_player_to_be_blocked(self) -> None:
         state = new_game()

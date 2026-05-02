@@ -245,11 +245,13 @@ def apply_move(state: GameState, move: Move) -> GameState:
         raise ValueError(result.reason)
 
     new_state = state.clone()
-    cells = absolute_cells(
-        move.piece,
-        origin=(move.x, move.y),
-        rotation=move.rotation,
-        flipped=move.flipped,
+    cells = tuple(
+        absolute_cells(
+            move.piece,
+            origin=(move.x, move.y),
+            rotation=move.rotation,
+            flipped=move.flipped,
+        )
     )
     # Materialize the piece on the cloned board before advancing turn metadata.
     for x, y in cells:
