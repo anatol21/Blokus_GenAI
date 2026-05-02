@@ -9,6 +9,21 @@ from blokus.pieces import PIECE_IDS
 Coordinate = tuple[int, int]
 
 
+def _build_occupied_cells(
+    board: list[list[str | None]],
+    players: tuple[str, ...],
+) -> dict[str, set[Coordinate]]:
+    occupied: dict[str, set[Coordinate]] = {player: set() for player in players}
+    for y, row in enumerate(board):
+        for x, cell in enumerate(row):
+            if cell is None:
+                continue
+            if cell not in occupied:
+                raise ValueError(f"Board contains unknown player token {cell!r}.")
+            occupied[cell].add((x, y))
+    return occupied
+
+
 @dataclass(frozen=True)
 class Move:
     """One attempted or completed piece placement."""
@@ -69,6 +84,16 @@ class GameState:
     finished: bool = False
     controller_types: dict[str, str] = field(default_factory=dict)
     controller_strategies: dict[str, str] = field(default_factory=dict)
+    # Cached occupied coordinates per player.
+    # This is derived state and is intentionally not serialized.
+    occupied_cells: dict[str, set[Coordinate]] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.occupied_cells is None:
+            self.occupied_cells = _build_occupied_cells(self.board, self.players)
+            return
+        for player in self.players:
+            self.occupied_cells.setdefault(player, set())
 
     @property
     def board_size(self) -> int:
@@ -85,6 +110,10 @@ class GameState:
     def clone(self) -> "GameState":
         """Create a deep-enough copy for safe state transitions."""
 
+        occupied_cells = None
+        if self.occupied_cells is not None:
+            occupied_cells = {player: set(cells) for player, cells in self.occupied_cells.items()}
+
         return GameState(
             mode=self.mode,
             board=deepcopy(self.board),
@@ -97,6 +126,7 @@ class GameState:
             finished=self.finished,
             controller_types=dict(self.controller_types),
             controller_strategies=dict(self.controller_strategies),
+            occupied_cells=occupied_cells,
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -193,6 +223,8 @@ class GameState:
             player: str(strategy_source.get(player, "default")) for player in players
         }
 
+        occupied_cells = _build_occupied_cells(board, players)
+
         return cls(
             mode=mode,
             board=board,
@@ -205,4 +237,5 @@ class GameState:
             finished=bool(data.get("finished", False)),
             controller_types=controllers,
             controller_strategies=strategies,
+            occupied_cells=occupied_cells,
         )
