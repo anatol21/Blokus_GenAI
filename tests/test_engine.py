@@ -60,6 +60,17 @@ class EngineRuleTests(unittest.TestCase):
         # Board remains empty.
         self.assertTrue(all(cell is None for row in state.board for cell in row))
 
+        # Per-player cache entries must be distinct and independent.
+        state.occupied_cells_by_player["blue"].add((0, 0))
+        for player in state.players:
+            if player == "blue":
+                continue
+            self.assertEqual(state.occupied_cells_by_player[player], set())
+            self.assertIsNot(
+                state.occupied_cells_by_player["blue"],
+                state.occupied_cells_by_player[player],
+            )
+
         # Existing initialization behavior remains intact.
         self.assertEqual(set(state.remaining_pieces.keys()), set(state.players))
         for player in state.players:
