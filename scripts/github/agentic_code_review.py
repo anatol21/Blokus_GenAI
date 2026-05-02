@@ -51,8 +51,8 @@ def main() -> int:
 
     run = coordinator.run(
         event_payload=event_payload,
-        base_ref=args.base_ref if args.base_ref is not None else os.environ.get("REVIEW_BASE_REF"),
-        head_ref=args.head_ref if args.head_ref is not None else os.environ.get("REVIEW_HEAD_REF"),
+        base_ref=_resolved_ref_value(args.base_ref, "REVIEW_BASE_REF"),
+        head_ref=_resolved_ref_value(args.head_ref, "REVIEW_HEAD_REF"),
         pr_number=args.pr_number if args.pr_number is not None else _env_int("REVIEW_PULL_NUMBER"),
     )
 
@@ -181,6 +181,19 @@ def _env_int(name: str) -> int | None:
         return int(raw.strip())
     except ValueError:
         return None
+
+
+def _resolved_ref_value(cli_value: str | None, env_name: str) -> str | None:
+    if cli_value is not None:
+        return _normalized_ref_value(cli_value)
+    return _normalized_ref_value(os.environ.get(env_name))
+
+
+def _normalized_ref_value(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _load_event_payload_if_available(

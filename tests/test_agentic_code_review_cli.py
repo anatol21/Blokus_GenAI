@@ -486,7 +486,7 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
             self.assertEqual(payload["verdict"], "LGTM")
             self.assertIn("`LGTM`", (artifact_dir / "review.md").read_text(encoding="utf-8"))
 
-    def test_main_prefers_explicit_cli_pr_number_over_environment(self) -> None:
+    def test_main_treats_blank_cli_refs_as_unset_while_preserving_explicit_pr_number(self) -> None:
         config = _make_config()
         run = _make_run(same_repo=False, verdict="LGTM")
 
@@ -529,8 +529,8 @@ class AgenticCodeReviewCliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["pr_number"], 0)
-            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["base_ref"], "")
-            self.assertEqual(coordinator_cls.return_value.run.call_args.kwargs["head_ref"], "")
+            self.assertIsNone(coordinator_cls.return_value.run.call_args.kwargs["base_ref"])
+            self.assertIsNone(coordinator_cls.return_value.run.call_args.kwargs["head_ref"])
 
     def test_main_uses_environment_ref_fallbacks_when_cli_overrides_are_absent(self) -> None:
         config = _make_config()

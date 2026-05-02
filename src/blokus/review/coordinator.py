@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from blokus.review.config import ReviewConfig
 from blokus.review.diff import build_review_context, should_run_performance_review
@@ -26,6 +26,14 @@ MAX_RENDERED_PATCH_CHARS = 12_000
 _RENDERED_PATCH_TRUNCATION_MARKER = "\n... [diff hunk truncated for scale]\n"
 _RENDERED_BUNDLE_TRUNCATION_MARKER = "\n\n... [additional diff context truncated for scale]"
 MAX_SPECIALIST_WORKERS = 2
+_NON_BLOCKING_FINDING_CATEGORIES = {"tests", "performance", "requirements"}
+_SPECIALIST_BLOCKING_DEGRADING_RISKS = {
+    "Commit or file-list context was truncated for scale.",
+    "Diff context was truncated for scale.",
+    "Diff analysis was truncated for scale.",
+    "The shared review prompt asset was unavailable.",
+    "A specialist prompt asset was unavailable.",
+}
 
 
 @dataclass(frozen=True)
@@ -154,6 +162,7 @@ class ReviewCoordinator:
         if diff_analysis_truncated:
             _append_diff_analysis_truncation_risk(uncertain_risks)
 
+        findings = self._normalize_findings(findings, uncertain_risks)
         findings = self._dedupe_and_limit(findings)
         summary = self._build_summary(
             context,
@@ -266,6 +275,42 @@ class ReviewCoordinator:
             reverse=True,
         )
         return ordered[: self.config.max_findings]
+
+    def _normalize_findings(
+        self,
+        findings: list[Finding],
+        uncertain_risks: list[UncertainRisk],
+    ) -> list[Finding]:
+        return [self._normalize_finding(finding, uncertain_risks) for finding in findings]
+
+    def _normalize_finding(
+        self,
+        finding: Finding,
+        uncertain_risks: list[UncertainRisk],
+    ) -> Finding:
+        normalized = finding
+        if finding.source != "static-analyzer" and finding.severity == "critical":
+            normalized = replace(normalized, severity="high")
+
+        effective_blocking = self._is_effectively_blocking(normalized, uncertain_risks)
+        if effective_blocking != normalized.blocking_recommendation:
+            normalized = replace(normalized, blocking_recommendation=effective_blocking)
+        return normalized
+
+    def _is_effectively_blocking(
+        self,
+        finding: Finding,
+        uncertain_risks: list[UncertainRisk],
+    ) -> bool:
+        if finding.severity not in set(self.config.blocking_severities):
+            return False
+        if finding.category in _NON_BLOCKING_FINDING_CATEGORIES:
+            return False
+        if finding.source == "static-analyzer":
+            return finding.category == "static-analysis"
+        if finding.source == "correctness":
+            return finding.confidence == "high" and not _specialist_blocking_was_degraded(uncertain_risks)
+        return False
 
     def _build_summary(
         self,
@@ -543,6 +588,15 @@ def _performance_specialist_can_review(context: ReviewContext) -> bool:
     return bool(performance_sensitive_files) and all(
         changed_file.patch.strip() for changed_file in performance_sensitive_files
     )
+
+
+def _specialist_blocking_was_degraded(uncertain_risks: list[UncertainRisk]) -> bool:
+    for risk in uncertain_risks:
+        if risk.risk in _SPECIALIST_BLOCKING_DEGRADING_RISKS:
+            return True
+        if risk.risk.endswith("specialist could not complete this run."):
+            return True
+    return False
 
 
 _NON_BLOCKING_UNCERTAIN_RISKS = {

@@ -17,6 +17,7 @@ from blokus.review.config import MAX_PROVIDER_RETRIES, ReviewConfig
 
 _MAX_OPENROUTER_RESPONSE_BYTES = 1_000_000
 _MAX_CONCURRENT_OPENROUTER_REQUESTS = 2
+_MAX_RETRY_AFTER_SECONDS = 30.0
 _OPENROUTER_REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_OPENROUTER_REQUESTS)
 
 
@@ -194,7 +195,7 @@ def _retry_delay_seconds(attempt: int, error: HTTPError | None = None) -> float:
     if error is not None and error.code == 429:
         retry_after = _retry_after_seconds(getattr(error, "headers", None))
         if retry_after is not None:
-            return retry_after
+            return min(retry_after, _MAX_RETRY_AFTER_SECONDS)
         return min(float(2**attempt), 30.0)
     return min(0.25 * attempt, 1.0)
 

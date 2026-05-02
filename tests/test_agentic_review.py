@@ -6,7 +6,9 @@ import tempfile
 import threading
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from email.message import Message
+from email.utils import format_datetime
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError, URLError
@@ -1934,6 +1936,111 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(limited, [findings[0]])
 
+    def test_coordinator_downgrades_critical_specialist_findings(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        finding = Finding(
+            id="crit",
+            title="Claimed critical issue",
+            severity="critical",
+            confidence="high",
+            category="correctness",
+            file="src/blokus/engine.py",
+            line_start=12,
+            line_end=12,
+            evidence="A specialist claimed the change breaks imports.",
+            impact="Would stop the module from loading.",
+            suggested_action="Fix the changed import path.",
+            blocking_recommendation=True,
+            source="correctness",
+        )
+
+        normalized = coordinator._normalize_findings([finding], [])[0]
+
+        self.assertEqual(normalized.severity, "high")
+
+    def test_coordinator_treats_test_findings_as_non_blocking(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        context = _review_context(_changed_file("src/blokus/engine.py", line_start=12, line_end=12))
+        static_report = StaticAnalysisReport(findings=(), uncertain_risks=(), commands=(), posture="clean")
+        finding = Finding(
+            id="tests-gap",
+            title="Tests gap",
+            severity="high",
+            confidence="high",
+            category="tests",
+            file="src/blokus/engine.py",
+            line_start=12,
+            line_end=12,
+            evidence="A reviewer claims the retry path lacks direct tests.",
+            impact="The change may be under-tested.",
+            suggested_action="Add direct retry-path coverage.",
+            blocking_recommendation=True,
+            source="tests",
+        )
+
+        normalized = coordinator._normalize_findings([finding], [])
+        summary = coordinator._build_summary(context, normalized, static_report, False, True, False)
+        verdict = coordinator._build_verdict(normalized, [])
+
+        self.assertFalse(normalized[0].blocking_recommendation)
+        self.assertEqual(summary.test_posture, "partial")
+        self.assertEqual(verdict, "LGTM")
+
+    def test_coordinator_suppresses_blocking_specialist_findings_when_context_is_truncated(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        finding = Finding(
+            id="truncated-claim",
+            title="Possible import breakage",
+            severity="high",
+            confidence="high",
+            category="correctness",
+            file="src/blokus/review/coordinator.py",
+            line_start=12,
+            line_end=12,
+            evidence="The displayed diff snippet appears to show a broken string literal.",
+            impact="Could prevent the module from importing.",
+            suggested_action="Inspect the full file or rerun compile checks.",
+            blocking_recommendation=True,
+            source="correctness",
+        )
+        uncertain_risks = [
+            UncertainRisk(
+                risk="Diff context was truncated for scale.",
+                reason_uncertain="The diff excerpt omitted part of the file.",
+                suggested_verification="Open the full file or rerun compile checks.",
+            )
+        ]
+
+        normalized = coordinator._normalize_findings([finding], uncertain_risks)
+        verdict = coordinator._build_verdict(normalized, uncertain_risks)
+
+        self.assertFalse(normalized[0].blocking_recommendation)
+        self.assertEqual(verdict, "LGTM")
+
+    def test_coordinator_preserves_blocking_static_analysis_findings(self) -> None:
+        coordinator = ReviewCoordinator(_make_config(REPO_ROOT))
+        finding = Finding(
+            id="compile-fail",
+            title="Python compile error",
+            severity="high",
+            confidence="high",
+            category="static-analysis",
+            file="src/blokus/review/coordinator.py",
+            line_start=12,
+            line_end=12,
+            evidence="`python -m compileall` failed on a changed file.",
+            impact="The module cannot be imported successfully.",
+            suggested_action="Fix the syntax error and rerun compileall.",
+            blocking_recommendation=True,
+            source="static-analyzer",
+        )
+
+        normalized = coordinator._normalize_findings([finding], [])
+        verdict = coordinator._build_verdict(normalized, [])
+
+        self.assertTrue(normalized[0].blocking_recommendation)
+        self.assertEqual(verdict, "NEEDS CHANGES")
+
     def test_script_resolve_repo_root_is_independent_of_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, mock.patch.dict(
                 os.environ,
@@ -3075,6 +3182,43 @@ class AgenticReviewTests(unittest.TestCase):
 
         self.assertEqual(review_provider._retry_delay_seconds(1, retryable_error), 2.0)
         self.assertEqual(review_provider._retry_delay_seconds(4, retryable_error), 16.0)
+
+    def test_retry_delay_caps_large_retry_after_headers(self) -> None:
+        retryable_error = HTTPError(
+            "https://openrouter.example/chat/completions",
+            429,
+            "rate limited",
+            hdrs=Message(),
+            fp=None,
+        )
+        retryable_error.headers["Retry-After"] = "999"
+
+        from blokus.review import provider as review_provider
+
+        self.assertEqual(
+            review_provider._retry_delay_seconds(1, retryable_error),
+            review_provider._MAX_RETRY_AFTER_SECONDS,
+        )
+
+    def test_retry_after_parses_http_date_header(self) -> None:
+        retryable_error = HTTPError(
+            "https://openrouter.example/chat/completions",
+            429,
+            "rate limited",
+            hdrs=Message(),
+            fp=None,
+        )
+        retryable_error.headers["Retry-After"] = format_datetime(
+            datetime.now(timezone.utc) + timedelta(seconds=5),
+            usegmt=True,
+        )
+
+        from blokus.review import provider as review_provider
+
+        delay = review_provider._retry_delay_seconds(1, retryable_error)
+
+        self.assertGreaterEqual(delay, 0.0)
+        self.assertLessEqual(delay, review_provider._MAX_RETRY_AFTER_SECONDS)
 
     def test_openrouter_client_retries_invalid_json_response(self) -> None:
         client = OpenRouterClient(
