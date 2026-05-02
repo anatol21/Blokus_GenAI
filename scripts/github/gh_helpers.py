@@ -40,14 +40,14 @@ class GitHubClient:
 
     def paginate(self, path: str) -> list[Any]:
         items: list[Any] = []
-        next_url = f"{API_ROOT}{path}"
+        next_url: str | None = f"{API_ROOT}{path}"
         while next_url:
             data, headers = self._request_url("GET", next_url)
             if isinstance(data, list):
                 items.extend(data)
             elif data is not None:
                 items.append(data)
-            next_url = _next_link(headers.get("Link", ""))
+            next_url = _next_link(headers.get("Link") or "")
         return items
 
     def get_issue(self, issue_number: int) -> dict[str, Any]:

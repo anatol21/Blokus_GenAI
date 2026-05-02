@@ -13,6 +13,7 @@ COMMENT_MARKERS = {
     "pr_intelligence": "agent-pr-intelligence",
     "failure_summary": "agent-failure-summary",
     "repair": "agent-repair-loop",
+    "agentic_review": "agentic-code-review",
 }
 
 REPAIR_STATE_MARKER = "agent-repair-loop-state"
@@ -204,9 +205,7 @@ def triage_issue(title: str, body: str, labels: Iterable[str]) -> dict[str, obje
         ),
         "rule-ambiguity": ("ambiguity or decision needed", "why this blocks implementation"),
     }.get(kind, ())
-    missing_sections = [
-        name for name in required_sections if not section_value(sections, name)
-    ]
+    missing_sections = [name for name in required_sections if not section_value(sections, name)]
 
     add_labels = set(domain_labels)
     remove_labels: set[str] = set()
@@ -296,6 +295,9 @@ def tests_missing(paths: Iterable[str]) -> bool:
     )
     tests_touched = any(path.startswith("tests/") for path in normalized)
     return code_touched and not tests_touched
+
+
+setattr(tests_missing, "__test__", False)
 
 
 def classify_failure_category(job_names: Iterable[str]) -> str:

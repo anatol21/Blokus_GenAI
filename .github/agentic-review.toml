@@ -1,0 +1,30 @@
+max_findings = 5
+excluded_globs = ["*.md", "*.ai", "*.svg", "*.png", "*.xlsx", "*.pdf"]
+blocking_severities = ["critical", "high"]
+prompt_dir = ".github/prompts"
+spec_path = "docs/agentic-review/spec.md"
+schema_path = "schemas/agentic_review_output.schema.json"
+
+[provider]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+timeout_seconds = 45
+max_retries = 2
+tool_timeout_seconds = 120
+
+[models]
+default = "openai/gpt-5.2"
+correctness = "openai/gpt-5.2"
+tests = "openai/gpt-5.2"
+performance = "openai/gpt-5.2"
+
+[performance]
+path_markers = ["src/blokus/engine.py", "src/blokus/evaluate.py", "src/blokus/players.py"]
+diff_markers = ["for ", "while ", "async ", "await ", "cache", "query", "load", "batch", "chunk", "sort(", "list("]
+
+[heuristics]
+schema_test_paths = ["tests/test_serialization.py"]
+fixture_test_paths = ["tests/test_serialization.py", "tests/test_evaluate.py"]
+cli_test_paths = ["tests/test_cli.py", "scripts/cli_smoke.sh"]
+serialization_paths = ["src/blokus/models.py", "src/blokus/release.py"]
+dependency_files = ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "requirements-dev.txt"]
