@@ -69,6 +69,14 @@ class GameState:
     finished: bool = False
     controller_types: dict[str, str] = field(default_factory=dict)
     controller_strategies: dict[str, str] = field(default_factory=dict)
+    # Cached occupied coordinates per player.
+    # This is derived state and is intentionally not serialized.
+    occupied_cells_by_player: dict[str, set[Coordinate]] = field(default_factory=dict, repr=False)
+
+    def __post_init__(self) -> None:
+        # Ensure every configured player has a cache entry.
+        for player in self.players:
+            self.occupied_cells_by_player.setdefault(player, set())
 
     @property
     def board_size(self) -> int:
@@ -97,6 +105,11 @@ class GameState:
             finished=self.finished,
             controller_types=dict(self.controller_types),
             controller_strategies=dict(self.controller_strategies),
+            # Derived cache is deep-copied for correctness in atomic step 1.
+            # Performance tradeoffs will be evaluated in a later atomic step.
+            occupied_cells_by_player={
+                player: set(cells) for player, cells in self.occupied_cells_by_player.items()
+            },
         )
 
     def to_dict(self) -> dict[str, object]:

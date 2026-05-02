@@ -11,7 +11,7 @@ from blokus.engine import (
     validate_pass,
 )
 from blokus.models import Move
-from blokus.pieces import absolute_cells
+from blokus.pieces import PIECE_IDS, absolute_cells
 
 
 def play_standard_opening_cycle():
@@ -49,6 +49,46 @@ class EngineRuleTests(unittest.TestCase):
         result = validate_move(state, Move("yellow", "I1", 19, 0))
         self.assertFalse(result.ok)
         self.assertIn("It is blue's turn", result.reason)
+
+    def test_new_game_initializes_occupied_cells_by_player_cache(self) -> None:
+        state = new_game()
+
+        self.assertEqual(set(state.occupied_cells_by_player.keys()), set(state.players))
+        for player in state.players:
+            self.assertEqual(state.occupied_cells_by_player[player], set())
+
+        # Board remains empty.
+        self.assertTrue(all(cell is None for row in state.board for cell in row))
+
+        # Per-player cache entries must be distinct and independent.
+        state.occupied_cells_by_player["blue"].add((0, 0))
+        for player in state.players:
+            if player == "blue":
+                continue
+            self.assertEqual(state.occupied_cells_by_player[player], set())
+            self.assertIsNot(
+                state.occupied_cells_by_player["blue"],
+                state.occupied_cells_by_player[player],
+            )
+
+        # Existing initialization behavior remains intact.
+        self.assertEqual(set(state.remaining_pieces.keys()), set(state.players))
+        for player in state.players:
+            self.assertEqual(state.remaining_pieces[player], set(PIECE_IDS))
+
+    def test_clone_deep_copies_occupied_cells_by_player_sets(self) -> None:
+        state = new_game()
+        state.occupied_cells_by_player["blue"].add((0, 0))
+
+        cloned = state.clone()
+        self.assertIsNot(
+            state.occupied_cells_by_player["blue"],
+            cloned.occupied_cells_by_player["blue"],
+        )
+
+        cloned.occupied_cells_by_player["blue"].add((1, 1))
+        self.assertEqual(state.occupied_cells_by_player["blue"], {(0, 0)})
+        self.assertEqual(cloned.occupied_cells_by_player["blue"], {(0, 0), (1, 1)})
 
     def test_same_color_edge_contact_is_illegal(self) -> None:
         state = play_standard_opening_cycle()
