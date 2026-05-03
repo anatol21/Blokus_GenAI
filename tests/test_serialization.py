@@ -97,6 +97,16 @@ class SerializationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "No player configured for board symbol"):
             GameState.from_dict(payload)
 
+    def test_board_player_missing_from_players_is_rejected(self) -> None:
+        payload = self.load_initial_payload()
+
+        # 'O' maps to player 'orange' which is not in classic mode's player list.
+        board = cast(list[str], payload["board"])
+        board[0] = "O" + board[0][1:]
+
+        with self.assertRaisesRegex(ValueError, "Board contains player 'orange'"):
+            GameState.from_dict(payload)
+
     def test_mismatched_player_list_is_rejected(self) -> None:
         payload = self.load_initial_payload()
         payload["players"] = ["blue", "yellow"]

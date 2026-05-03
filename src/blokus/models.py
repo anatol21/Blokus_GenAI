@@ -173,6 +173,10 @@ class GameState:
             for x, cell in enumerate(row):
                 if cell is None:
                     continue
+                if cell not in occupied_cells_by_player:
+                    raise ValueError(
+                        f"Board contains player '{cell}' not present in players {players!r}."
+                    )
                 occupied_cells_by_player[cell].add((x, y))
 
         remaining_source = data.get("remaining_pieces")
