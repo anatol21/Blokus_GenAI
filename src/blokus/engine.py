@@ -179,7 +179,8 @@ def _anchor_cells(state: GameState, player: str) -> set[Coordinate]:
                 continue
             if state.board[ay][ax] is not None:
                 continue
-            if _has_edge_contact_with_player(state, player, (anchor,)):
+            # Avoid re-reading the occupied-cell cache for every candidate anchor.
+            if any((ax + odx, ay + ody) in occupied for odx, ody in ORTHOGONAL_DELTAS):
                 continue
             anchors.add(anchor)
     return anchors

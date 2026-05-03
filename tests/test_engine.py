@@ -1,6 +1,7 @@
 import unittest
 
 from blokus.engine import (
+    _anchor_cells,
     apply_move,
     compute_scores,
     get_occupied_cells,
@@ -103,6 +104,36 @@ class EngineRuleTests(unittest.TestCase):
         state = play_standard_opening_cycle()
         result = validate_move(state, Move("blue", "I2", 1, 1))
         self.assertTrue(result.ok)
+
+    def test_non_opening_move_requires_same_color_corner_contact(self) -> None:
+        state = play_standard_opening_cycle()
+
+        # Far from blue's starting piece: no edge contact and no diagonal contact.
+        result = validate_move(state, Move("blue", "I2", 5, 5))
+        self.assertFalse(result.ok)
+        self.assertIn("touch at least one same-color piece at a corner", result.reason)
+
+    def test_anchor_cells_are_empty_and_in_bounds(self) -> None:
+        state = play_standard_opening_cycle()
+
+        anchors = _anchor_cells(state, "blue")
+        occupied_all = {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell is not None
+        }
+        self.assertTrue(anchors.isdisjoint(occupied_all))
+        self.assertTrue(
+            all(0 <= x < state.board_size and 0 <= y < state.board_size for x, y in anchors)
+        )
+
+    def test_list_legal_moves_returns_valid_moves_after_opening(self) -> None:
+        state = play_standard_opening_cycle()
+
+        moves = list_legal_moves(state, limit=50)
+        self.assertTrue(moves)
+        self.assertTrue(all(validate_move(state, move).ok for move in moves))
 
     def test_apply_move_updates_turn_history_and_piece_pool(self) -> None:
         state = new_game()
