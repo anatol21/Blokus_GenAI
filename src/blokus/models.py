@@ -167,6 +167,18 @@ class GameState:
                     parsed_row.append(player_for_symbol(symbol))
             board.append(parsed_row)
 
+        # Rebuild derived occupied-cells cache from the parsed board.
+        occupied_cells_by_player: dict[str, set[Coordinate]] = {player: set() for player in players}
+        for y, row in enumerate(board):
+            for x, cell in enumerate(row):
+                if cell is None:
+                    continue
+                if cell not in occupied_cells_by_player:
+                    raise ValueError(
+                        f"Board contains player '{cell}' not present in players {players!r}."
+                    )
+                occupied_cells_by_player[cell].add((x, y))
+
         remaining_source = data.get("remaining_pieces")
         if not isinstance(remaining_source, dict):
             raise ValueError("State is missing 'remaining_pieces'.")
@@ -218,4 +230,5 @@ class GameState:
             finished=bool(data.get("finished", False)),
             controller_types=controllers,
             controller_strategies=strategies,
+            occupied_cells_by_player=occupied_cells_by_player,
         )

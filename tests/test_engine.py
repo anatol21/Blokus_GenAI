@@ -37,6 +37,27 @@ def blocked_blue_state():
     return state
 
 
+def board_occupied_cells(state):
+    """Derive occupied cells by scanning the board (not cache-backed helpers)."""
+
+    expected_all = {
+        (x, y)
+        for y, row in enumerate(state.board)
+        for x, cell in enumerate(row)
+        if cell is not None
+    }
+    expected_by_player = {
+        player: {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell == player
+        }
+        for player in state.players
+    }
+    return expected_all, expected_by_player
+
+
 class EngineRuleTests(unittest.TestCase):
     def test_unsupported_duo_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported mode 'duo'"):
@@ -93,6 +114,25 @@ class EngineRuleTests(unittest.TestCase):
         cloned.occupied_cells_by_player["blue"].add((1, 1))
         self.assertEqual(state.occupied_cells_by_player["blue"], {(0, 0)})
         self.assertEqual(cloned.occupied_cells_by_player["blue"], {(0, 0), (1, 1)})
+
+    def test_clone_preserves_cache_contents_without_sharing_sets_after_moves(self) -> None:
+        state = play_standard_opening_cycle()
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        cloned = state.clone()
+        for player in state.players:
+            self.assertEqual(
+                cloned.occupied_cells_by_player[player],
+                state.occupied_cells_by_player[player],
+            )
+            self.assertIsNot(
+                cloned.occupied_cells_by_player[player],
+                state.occupied_cells_by_player[player],
+            )
+
+        # Mutating the clone must not affect the original.
+        cloned.occupied_cells_by_player["blue"].add((2, 2))
+        self.assertNotIn((2, 2), state.occupied_cells_by_player["blue"])
 
     def test_same_color_edge_contact_is_illegal(self) -> None:
         state = play_standard_opening_cycle()
@@ -193,6 +233,15 @@ class EngineRuleTests(unittest.TestCase):
             if cell is not None
         }
         self.assertEqual(get_occupied_cells(state), expected_all)
+
+    def test_get_occupied_cells_matches_board_scan_per_player_after_multiple_moves(self) -> None:
+        state = play_standard_opening_cycle()
+        # Extend beyond the opening cycle to cover incremental cache updates.
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        _expected_all, expected_by_player = board_occupied_cells(state)
+        for player in state.players:
+            self.assertEqual(get_occupied_cells(state, player), expected_by_player[player])
 
     def test_get_occupied_cells_returns_defensive_copy(self) -> None:
         state = new_game()
