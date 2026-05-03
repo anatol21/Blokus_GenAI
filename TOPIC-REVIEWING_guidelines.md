@@ -1,28 +1,24 @@
-# Topic-XX_Guidelines.md
-
-> **Template for Student Guideline Packages**  
-> *Fill in the bracketed sections `[...]` with your team's curated content.*
-
----
+# Topic-Reviewing_Guidelines.md
 
 ## Team Information
 
-**Team Name:** `[Your Team Name/ID]`  
-**Topic:** Reviewing
-**Date:** `[Submission Date]`  
-**Authors:** Maximilian Alp Grüder, 
+**Team Name:** Team 01  
+**Topic:** Reviewing  
+**Date:** 04.05.2026  
+**Authors:**  
+Maximilian Alp Grüder 0743914400  
+Anatole Lobenko 2187322  
+Nicolas Alejandro Zevallos Chavez 2266453  
 
 ---
 
 
 ## 1. Unified Guidelines
 
-> **Note:** These are the merged, refined guidelines that your team recommends to the class. Each guideline should be actionable, specific, and usable during real SE/coding tasks.
-
 ### Guideline 1: Implement Agentic AI for Orchestration of Dedicated Review Tasks
 
 **Description:**  
-Use a central orchestrator agent to delegate specific review tasks to specialized sub-agents (e.g., security, performance, style), and use static code analysis tools to provide deterministic inputs and ensure comprehensive coverage without overwhelming a single model. The agent could be setup to be  triggered automatically for each merge request, PR or commit.
+Use a central orchestrator agent that triggers automatically to delegate specific review tasks to specialized sub-agents (e.g., security, performance, style), and use static code analysis tools to provide deterministic outputs, and ensure comprehensive coverage without overwhelming a single model.
 
 **Reasoning:**  
 Complex code reviews require expertise across multiple domains (security, performance, maintainability). A single LLM prompt struggles to cover all aspects deeply. By using an orchestrator, you can leverage specialized agents and static code analysis tools that are fine-tuned or prompted for specific tasks, improving the quality and depth of the review.
@@ -35,167 +31,174 @@ Orchestrator Agent: "Review this pull request for syntax, security vulnerabiliti
 - Style Agent: Ensures adherence to project coding standards.
 
 **When to Apply:**  
-Apply this guideline when reviewing large or complex codebases where multiple review dimensions need to be considered. It is particularly useful in CI/CD pipelines where automated, multi-faceted reviews are wished.
+Apply this guideline when reviewing large or complex codebases where multiple review dimensions need to be considered. It is particularly useful in CI/CD pipelines where automated, multi-faceted reviews are required.
 
 **When to Avoid:**  
-Avoid this for very small or simple code changes where the overhead of managing multiple agents may outweigh the benefits. In such cases, a single, well-crafted prompt to a general-purpose LLM or just using a static code review agent may suffice.
+Avoid this for very small or simple code changes where the overhead of managing multiple agents may outweigh the benefits. In such cases, a single, well-crafted prompt to a general-purpose LLM may suffice.
 
 ### Guideline 2: Give an output format and prioritize findings
 
-**Description**
+**Description:**
 Define a strict hierarchy of findings (Critical, Supporting, Trivial) and cap the number of "Nit" (minor) comments to prevent "reviewer fatigue" and "hallucinated nitpicking". Similarly, define an output format that is human-oriented and informative. 
 
-**Reasoning**
+**Reasoning:**
 LLMs are "eager to please" and will find issues even where none exist just to provide a long response. Weighting forces the model to focus on what actually breaks the build.
 
-**Example**
-- Start with a summary of the review.
-Open the review with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.
-- What Important means here
-Reserve Important for findings that would break behavior, leak data,
-or block a rollback: incorrect logic, unscoped database queries, PII
-in logs or error messages, and migrations that aren't backward
-compatible. Style, naming, and refactoring suggestions are Nit at
-most.
-- Cap the nits
-Report at most five Nits per review. If you found more, say "plus N
-similar items" in the summary instead of posting them inline. If
-everything you found is a Nit, lead the summary with "No blocking
-issues."
-- Do not report
-Anything CI already enforces: lint, formatting, type errors
-Generated files under `src/gen/` and any `*.lock` file
-Test-only code that intentionally violates production rules
-- Always check
-New API routes have an integration test
-Log lines don't include email addresses, user IDs, or request bodies
-Database queries are scoped to the caller's tenant
+**Example:**
+Severity: redefine what 🔴 Important means for your repo. The default calibration targets production code; a docs repo, a config repo, or a prototype might want a much narrower definition. State explicitly which classes of finding are Important and which are Nit at most. You can also escalate in the other direction, for example treating any CLAUDE.md violation as Important rather than the default nit.
+Nit volume: cap how many 🟡 Nit comments a single review posts. Prose and config files can be polished forever. A cap like “report at most five nits, mention the rest as a count in the summary” keeps reviews actionable.
 
-**When to Apply**
+**When to Apply:**
 Apply this guideline when using LLMs for large code reviews or in CI/CD pipelines where review volume needs to be controlled.
 
-**When to Avoid**
+**When to Avoid:**
 Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
 
-### Guideline 3: Ensure the code does not have any misleading or bias inducing comments
--> check more bias clusters and focus on biases instead of only this kind of bias where seniority or correctness is implied
-**Description**
-Explicitly strip "authority cues" and standardize variable names or comments before the LLM sees the code.
+### Guideline 3: Ensure the code does not have any misleading or bias-inducing comments
 
-**Reasoning**
-Models exhibit "Self-Declared Correctness" bias; they are less likely to find bugs in code that claims to be perfect. Neutralizing the input ensures a truly objective "blind" review.
+**Description:**
+Explicitly strip "authority cues", and remove subjective comments before the LLM sees the code to mitigate various bias clusters. Ensure the focus is on mitigating all types of biases, not just those where seniority or correctness is implied. This includes the description of the task as well.  
 
-**Example**
-Use a script to remove all comments and rename variables to generic placeholders (var1, func1) before a secondary logic-only review.
-Avoid passing codes with comments such as "optimized by senior dev" or "correct implementation" to an LLM evaluator.
+**Reasoning:**
+Models exhibit "Self-Declared Correctness" bias; they are less likely to find bugs in code that claims to be perfect. Models can also be influenced by the description of the task. Neutralizing the input ensures a truly objective "blind" review.
 
-**When to Apply**
-Apply this guideline when using LLMs for code reviews
+**Example:**
+Avoid passing code with comments such as "optimized by senior dev" or "correct implementation" to an LLM evaluator.
+A description that unnecessarily mentions arrays when only single integers are processed can confuse the LLM into rejecting a valid implementation.  
 
-**When to Avoid**
-Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
+**When to Apply:**
+Apply this guideline when using LLMs for code reviews.
 
-### Guideline 4: Use Structured prompting, personas, pseudocode and CoT reasoning to perform high level reviews
+**When to Avoid:**
+Always good practice to follow this guideline! 
 
-**Description**
-For reviewing complex code or code that is not well documented, use structured prompting, personas, pseudocode and CoT reasoning to perform high level reviews. To assess the algorithm, convert the code into pseudocode, then recursively decompose the pseudocode to evaluate the algorithm. Instruct the LLM to evaluate subjective artifacts (like code summaries or documentation) from multiple professional viewpoints, such as a code reviewer, the original author, or a system analyst.
+### Guideline 4: Approaches for Improving Comprehensive Reasoning for Complex Code 
+
+**Description:**
+For reviewing complex code or code that is not well documented, use structured prompting, personas, pseudocode and CoT reasoning to perform high-level reviews. To assess the algorithm, convert the code into pseudocode, then recursively decompose the pseudocode to evaluate the algorithm. Instruct the LLM to evaluate subjective artifacts (like code summaries or documentation) from multiple professional viewpoints, such as a code reviewer, the original author, or a system analyst.
 
 **Reasoning:** This allows the LLM judge to assess the core algorithm without being confused by complex, language-specific syntax. CoT reasoning helps the LLM to break down the problem into smaller, more manageable steps, which reduces the likelihood of errors, hallucinations and improves the quality of the review. Aggregating perspectives helps the LLM align more closely with human consensus.
 
 **Example:** 
-Prompt the LLM with:
 1. **Persona**: "Act as a senior system analyst (or a security expert)."
-2. **Pseudocode Generation**: "First, read the provided code and convert its core logic into language-agnostic pseudocode."
-3. **Chain-of-Thought (CoT) Breakdown**: "Next, decompose the pseudocode into distinct steps (e.g., validation, execution, state update). Analyze each step individually for logical flaws and edge cases."
+2. **Pseudocode Generation**: "Convert code into pseudocode, then recursively decomposes the pseudocode to assess the algorithm. After generating pseudocode and findings, verify if the findings actually exist in the original source code, not just the pseudocode."
+3. **Chain-of-Thought (CoT) Breakdown**: "Explain both what the change does and why it was created."  
 4. **Multi-Perspective Final Review**: "Finally, provide your review summary from the perspective of a code reviewer (focusing on code readability) and a system architect (focusing on design robustness)."
 
-**When to Apply**
-Apply this guideline when using LLMs for high level and complex code reviews
+**When to Apply:**
+Apply this guideline when using LLMs for high-level and complex code reviews.
 
-**When to Avoid**
+**When to Avoid:**
 Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where detailed feedback might actually be valuable.
 
-### Guideline 5 LLM as a judge and Human in the loop
+### Guideline 5: LLM as a judge and Human-in-the-loop
 
-**Description**
-LLM agents are highly able, and can perform many tasks without human involvement. Accountability, and the shortcomings of the AI technology however, still requires human involvement. Human involvement could however be optimized by implementing checks and breakpoints during the automated review process. 
-The results of all suggestions of a reviewing agents must be evaluated by other agents with different personas according to these two criteria:
-1) Confidence of the Change 
-2) Criticality of the Change  
+**Description:**
+LLM agents are highly capable and can perform many tasks without human involvement. However, accountability and the shortcomings of AI technology still require human involvement. Human involvement can be optimized by implementing checks and breakpoints during the automated review process. 
+The results of all suggestions of reviewing agents must be evaluated by other agents with different personas according to these two criteria:
+1) Confidence of the agent.
+2) Criticality of the change 
 
-Criticality stands for how likely is it that the change will affect a crucial process or a result in a dangerous state for the code snipplet or section being changed, whereas confidence score represents how sure the agent is that its review and suggestion fits the original context and does not introduce additional errors. 
+Criticality stands for how likely it is that the change will affect a crucial process or result in a dangerous state for the code snippet or section being changed, whereas confidence score represents how sure the agent is that its review and suggestion fits the original context, is useful, functionally correct and does not introduce additional errors. 
 
-Agents could be allowed to implement high confidence and low criticality reviews without human review, but if the criticality is high, or medium, the confidence should be capped so that a human review is still needed.
+Agents could be allowed to implement high-confidence reviews without human review, but if the criticality is high or medium, the confidence should be capped so that a human review is still needed. 
 
-
-
-Confidence:
-
-
-LLM as a judge should then decide to implement the change or trigger a human check by evaluating the different scores by these different agents. 
-**Reasoning**
-LLM Agents are highl developed solutions that could be trusted with many tasks, among them automatic detection and implementation of small scale changes that are low risk, such as high-volume routine checks (e.g., style formatting). However, there is evidence that they struggle with complex, subjective evaluations. Therefore, LLM Agents should not be allowed to implement such evaluations and reviews without human supervision. 
+**Reasoning:**
+LLM agents are highly developed solutions that can be trusted with many tasks, among them the automatic detection and implementation of small-scale changes that are low risk, such as high-volume routine checks (e.g., style formatting). However, there is evidence that they struggle with complex, subjective evaluations. Therefore, LLM agents should not be allowed to implement such evaluations and reviews without human supervision. 
 
 **Example:** 
+An automated review agent auto-approves a typo fix or the addition of edge-case logic, but stops and triggers additional agents with different personas for reviews that are not low in criticality. A review agent with a senior software developer persona triggers the senior architect agent to go over the criticality of a change. Both agents assign a criticality and a confidence value to the change, and this is then reported to a human evaluator. 
 
-Criticality: Score the change out of then on following criteria:
+Criticality: Score the change out of ten based on the following criteria:
+
 0.1–0.3 (Low): UI changes, documentation, or non-functional refactors in isolated modules.
 
 0.4–0.7 (Medium): Changes to business logic, API schema updates, or new library dependencies.
 
 0.8–1.0 (High): Modifications to Authentication, Database migrations, PII handling, or Core Financial logic.
 
-Confidence: 
-Start with 1 and deduct points based on the following criteria: 
+Then, subtract points from the criticality score for each of the following criteria:
 Missing Context: Subtract 0.2 if the implementation depends on external functions not provided in the prompt.
 
 Complex Logic: Subtract 0.1 for every nested loop or recursive call where state is hard to track.
 
 Heuristic Mismatch: Subtract 0.3 if the code violates a "Should" rule in AGENT.md but technically compiles.
 
-An automated review agent auto-approves a typo fix or the addition of an edge-case logic, but stops and triggers additional agents with different personas for reviews that are not low in criticality. A review agent with senior software developer persona triggers the senior architect agent to go over the criticality of a change. Both agents assign a criticality and a confidence value to the change, and this is then reported to a human evaluator alongside the summary of the change by two different personas. 
+Confidence: Use ICE-Scoring (Impact, Confidence, Ease) to assess the quality of the change.
+
+A.1 Code Usefulness
+Evaluation Criteria:
+Usefulness (0-4) Usefulness of the code snippet based on the problem description.
+- A score of 0: Snippet is not at all helpful, it is irrelevant to the problem.
+- A score of 1: Snippet is slightly helpful, it contains information relevant to the problem, but it is easier to write the solution from scratch.
+- A score of 2: Snippet is somewhat helpful, it requires significant changes (compared to the size of the snippet), but is still useful.
+- A score of 3: Snippet is helpful, but needs to be slightly changed to solve the problem.
+- A score of 4: Snippet is very helpful, it solves the problem.
+
+A.2 Functional Correctness
+Evaluation Criteria:
+Functional Correctness (0-4) 
+- Execution-based quality of the code snippet combined with the problem. The correctness is measured by all possible unit tests and the comparison of the reference code. The combination of the code snippet and the problem should pass all the possible tests based on your understanding of the reference code. The length of the code snippet can not determine the correctness. You need to assess the logic line by line.
+- A score of 0 (failing all possible tests)
+means that the code snippet is totally
+incorrect and meaningless.
+- A score of 4 (passing all possible tests)
+means that the code snippet is totally
+correct and can handle all cases.
 
 
-**When to Apply**
+The LLM-as-a-judge should then decide to implement the change or trigger a human check by evaluating the different scores provided by these different agents.
+
+Evaluatin matrix: 
+
+**When to Apply:**
 In complex code environments with complex logic utilizing automated code agents. 
 
-**When to Avoid**
-Small scale pushes and code changes where the criticality is inherently low. 
+**When to Avoid:**
+Small-scale pushes and code changes where the criticality is inherently low. 
 
-### Guideline 6 have a separate review.md
+### Guideline 6: Have a separate REVIEW.md
 
-**Description**
-Create a concise, short, and separate review.md file specifically tailored for review agents so that they focus on specific tasks, assume speific personas, or produce outputs that follow specific requirements. Use grading scales like ICE-Scoring to materialize what is expected of the agent. 
+**Description:**
+Create a concise, short, and separate REVIEW.md file specifically tailored for review agents so that they focus on specific tasks, assume specific personas, or produce outputs that follow specific requirements.  
 
-**Reasoning:** This overrides generic agent behavior, injecting review-only instructions directly into the pipeline with the highest priority. Specificity and concise descriptions matter because length has a cost and a long instructional file dilutes the rules that matter most.
+**Reasoning:**
+This overrides generic agent behavior, injecting review-only instructions directly into the pipeline with the highest priority. Specificity and concise descriptions matter because length has a cost and a long instructional file dilutes the rules that matter most.
 
-Definitions: "Important" means any change affecting the DB_Connector or Auth modules.
-
-Exclusions: Ignore any formatting issues in /src/gen.
-
-Custom Check: Always verify that new API endpoints have an associated integration test.
-
-**Example**
+**Example:**
 REVIEW.md
-Severity: redefine what 🔴 Important means for your repo. The default calibration targets production code; a docs repo, a config repo, or a prototype might want a much narrower definition. State explicitly which classes of finding are Important and which are Nit at most. You can also escalate in the other direction, for example treating any CLAUDE.md violation as Important rather than the default nit.
-Nit volume: cap how many 🟡 Nit comments a single review posts. Prose and config files can be polished forever. A cap like “report at most five nits, mention the rest as a count in the summary” keeps reviews actionable.
-Skip rules: list paths, branch patterns, and finding categories where Claude should post no findings. Common candidates are generated code, lockfiles, vendored dependencies, and machine-authored branches, along with anything your CI already enforces like linting or spellcheck. For paths that warrant some review but not full scrutiny, set a higher bar instead of skipping entirely: “in scripts/, only report if near-certain and severe.”
-Repo-specific checks: add rules you want flagged on every PR, like “new API routes must have an integration test.” Because REVIEW.md is injected as highest priority, these land more reliably than the same rules in a long CLAUDE.md.
-Verification bar: require evidence before a class of finding is posted. For example, “behavior claims need a file:line citation in the source, not an inference from naming” cuts false positives that would otherwise cost the author a round trip.
-Re-review convergence: tell Claude how to behave when a PR has already been reviewed. A rule like “after the first review, suppress new nits and post Important findings only” stops a one-line fix from reaching round seven on style alone.
-Summary shape: ask for the review body to open with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case. The author wants to know the shape of the work before the details.
+- Assume the persona of a senior software developer with 10 years of experience.    
+- Start with a summary of the review.
+Open the review with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.
+- What Important means here:
+Reserve Important for findings that would break behavior, leak data,
+or block a rollback: incorrect logic, unscoped database queries, PII
+in logs or error messages, and migrations that aren't backward
+compatible. Style, naming, and refactoring suggestions are Nit at
+most.
+- Cap the nits:
+Report at most five Nits per review. If you found more, say "plus N
+similar items" in the summary instead of posting them inline. If
+everything you found is a Nit, lead the summary with "No blocking
+issues."
+- Do not report:
+Anything CI already enforces: lint, formatting, type errors
+Generated files under `src/gen/` and any `*.lock` file
+Test-only code that intentionally violates production rules
+- Always check:
+New API routes have an integration test
+Log lines don't include email addresses, user IDs, or request bodies
+Database queries are scoped to the caller's tenant
 
+**When to Apply:**
+When using specialized LLM agents such as orchestrators and specialized sub-agents.
 
-**When to Apply**
-When using LLM Agents such as orchestrator and specialized sub-agents for code reviews.
+**When to Avoid:**
+During earlier stages of the project, when the review is not delegated to LLM agents, and for simple repositories. 
 
-**When to Avoid**
-During earlier stages of the project, when review is not delegated to LLM agents, and for simple repositories. 
 ---
 
 ## 2. Raw Guidelines (Source Documents)
-
-> **Note:** Include the original guidelines from each of the three sources before merging. This shows your curation process.
 
 ### 2.1 Guidelines from Literature Readings
 
@@ -204,269 +207,265 @@ During earlier stages of the project, when review is not delegated to LLM agents
 - 2. Imen Jaoua, Oussama Ben Sghaier, and Houari Sahraoui. "Combining Large Language Models with Static Analyzers for Code Review Generation." (2025).
 - 3. Jiwon Moon, Yerin Hwang, Dongryeol Lee, Taegwan Kang, Yongil Kim, and Kyomin Jung. "Don’t Judge Code by Its Cover: Exploring Biases in LLM Judges for Code Evaluation." (2025).
 - 4. Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
+- 5. Cihan, Umut, et al. "Automated code review in practice." 2025 IEEE/ACM 47th International Conference on Software Engineering: Software Engineering in Practice (ICSE-SEIP). IEEE, 2025. https://arxiv.org/abs/2412.18531
 
 **Extracted Guidelines:**  
 For each relevant guideline from readings:
 
 **Guideline 2.1.1: Integrate Static Analysis with LLMs**  
-**Source:** Imen Jaoua, Oussama Ben Sghaier, and Houari Sahraoui. "Combining Large Language Models with Static Analyzers for Code Review Generation." (2025).
-**Description:** Combine knowledge-based systems (KBS) like static code analyzers with learning-based systems (LBS) like LLMs by injecting the analyzer's output directly into the LLM's prompt.
-**Reasoning:** Combine Knowledge-Based Systems (KBS), such as static code analyzers, with Learning-Based Systems (LBS), such as LLMs. Dynamically retrieve the outputs of static analyzers (e.g., Checkstyle or PMD) and inject them into the LLM's prompt using a Retrieval-Augmented Generation (RAG) approach.
+**Source:** Imen Jaoua, Oussama Ben Sghaier, and Houari Sahraoui. "Combining Large Language Models with Static Analyzers for Code Review Generation." (2025).  
+**Description:** Combine knowledge-based systems (KBS) like static code analyzers with learning-based systems (LBS) like LLMs by injecting the analyzer's output directly into the LLM's prompt.  
+**Reasoning:** Combine Knowledge-Based Systems (KBS), such as static code analyzers, with Learning-Based Systems (LBS), such as LLMs. Dynamically retrieve the outputs of static analyzers (e.g., Checkstyle or PMD) and inject them into the LLM's prompt using a Retrieval-Augmented Generation (RAG) approach.  
 **Example:** Provide a prompt structured as: ### Static code analyzer output: {static_analyzer_output} ### Code difference: {code_diff} to guide the LLM to output a robust review.  
 
 **Guideline 2.1.2: Mitigate "Self-Declared Correctness" Bias in AI Judges**  
-**Source:** Don’t Judge Code by Its Cover- Exploring Biases in LLM Judges for
-**Description:** Scrub or rigorously review code submissions for comments where the author explicitly claims the code is correct or optimized before passing it to an LLM evaluator.
-**Reasoning:** LLMs exhibit a strong positive bias toward "self-declared correctness" and "authority cues," often judging functionally incorrect code as correct simply because a comment claims it is.
-**Example:** An LLM might approve a buggy algorithm if the snippet begins with # Correct implementation or // Optimized by expert
+**Source:** Don’t Judge Code by Its Cover: Exploring Biases in LLM Judges for Code Evaluation.  
+**Description:** Scrub or rigorously review code submissions for comments where the author explicitly claims the code is correct or optimized before passing it to an LLM evaluator.  
+**Reasoning:** LLMs exhibit a strong positive bias toward "self-declared correctness" and "authority cues," often judging functionally incorrect code as correct simply because a comment claims it is.  
+**Example:** An LLM might approve a buggy algorithm if the snippet begins with # Correct implementation or // Optimized by expert.  
 
 **Guideline 2.1.3: Prevent Misleading Task Descriptions**  
-**Source:** Don’t Judge Code by Its Cover- Exploring Biases in LLM Judges for
-**Description:** Ensure that the task description provided to the LLM for evaluation is highly precise and free of irrelevant or misleading information
-**Reasoning:** Misleading task descriptions act as a severe negative bias, strongly impairing the LLM's evaluative accuracy and causing it to falsely penalize functionally and architecturally correct code.
-**Example:** A description that unnecessarily mentions arrays when only single integers are processed can confuse the LLM into rejecting a valid implementation
+**Source:** Don’t Judge Code by Its Cover: Exploring Biases in LLM Judges for Code Evaluation.  
+**Description:** Ensure that the task description provided to the LLM for evaluation is highly precise and free of irrelevant or misleading information.  
+**Reasoning:** Misleading task descriptions act as a severe negative bias, strongly impairing the LLM's evaluative accuracy and causing it to falsely penalize functionally and architecturally correct code.  
+**Example:** A description that unnecessarily mentions arrays when only single integers are processed can confuse the LLM into rejecting a valid implementation.  
 
 **Guideline 2.1.4: Utilize Structured Prompting**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Giving the LLMs a detailed, structured prompt that clearly defines the task, the evaluation criteria, the scoring scale, the required output format, and instructing the LLM to follow specific steps to evaluate code proved to be more reliable than simple and direct prompts. 
-**Reasoning:** Simple, direct prompts yield unreliable judgments; structured steps explicitly guiding the LLM through analytical reasoning significantly improve the model's accuracy
-**Example:** Using the ICE-Score approach, which instructs the LLM to follow a numbered list of steps to evaluate code against specific criteria like readability and correctness before outputting a verdict
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Giving the LLMs a detailed, structured prompt that clearly defines the task, the evaluation criteria, the scoring scale, the required output format, and instructing the LLM to follow specific steps to evaluate code proved to be more reliable than simple and direct prompts.  
+**Reasoning:** Simple, direct prompts yield unreliable judgments; structured steps explicitly guiding the LLM through analytical reasoning significantly improve the model's accuracy.  
+**Example:** Using the ICE-Score approach, which instructs the LLM to follow a numbered list of steps to evaluate code against specific criteria like readability and correctness before outputting a verdict.  
 
 **Guideline 2.1.5: Adopt Multi-Perspective Evaluation Personas**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Instruct the LLM to evaluate subjective artifacts (like code summaries or documentation) from multiple professional viewpoints, such as a code reviewer, the original author, or a system analyst.
-**Reasoning:** Code readability and summary usefulness are subjective; aggregating perspectives helps the LLM align more closely with human consensus.
-**Example:** Using the CODERPE framework to generate separate viewpoints from the perspective of a code reviewer, author, or system analyst.
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Instruct the LLM to evaluate subjective artifacts (like code summaries or documentation) from multiple professional viewpoints, such as a code reviewer, the original author, or a system analyst.  
+**Reasoning:** Code readability and summary usefulness are subjective; aggregating perspectives helps the LLM align more closely with human consensus.  
+**Example:** Using the CODERPE framework to generate separate viewpoints from the perspective of a code reviewer, author, or system analyst.  
 
 **Guideline 2.1.6: Weight Critical Facts Over Trivial Facts**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Explicitly instruct the LLM to categorize its findings into "Critical Facts," "Supporting Facts," and "Trivial Facts" to establish a weighting system
-**Reasoning:** LLMs frequently overemphasize minor, trivial details in code or documentation, penalizing valid code for minor omissions; establishing weights prevents this misalignment.
-**Example:** no explicit example provided. 
--> Agents could be prompted to ignore "Trivial Facts" like slightly unoptimized variable declarations if the "Critical Fact" of the business logic is entirely correct
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Explicitly instruct the LLM to categorize its findings into "Critical Facts," "Supporting Facts," and "Trivial Facts" to establish a weighting system.  
+**Reasoning:** LLMs frequently overemphasize minor, trivial details in code or documentation, penalizing valid code for minor omissions; establishing weights prevents this misalignment.  
+**Example:** Agents could be prompted to ignore "Trivial Facts" like slightly unoptimized variable declarations if the "Critical Fact" of the business logic is entirely correct.  
 
 **Guideline 2.1.7: Transition to Dynamic Execution Validation**  
-**Source:** Taufiqul Islam Khan, Shaowei Wang, Haoxiang Zhang, and Tse-Hsun Chen. (2026). A Survey of Code Review Benchmarks and Evaluation Practices in Pre-LLM and LLM Era. ACM. 
-**Description:** Do not rely solely on static LLM text evaluations; integrate automated runtime environments (e.g., Docker sandboxes) to compile and test LLM-proposed revisions.
-**Reasoning:** LLMs often suggest fixes that appear grammatically perfect and pass text-matching metrics but introduce logical deadlocks or fail to compile in reality
-**Example:** Automatically attempting to build a project with an LLM's suggested code revision to verify if it breaks existing functionality before presenting it to a human reviewer.
+**Source:** Taufiqul Islam Khan, Shaowei Wang, Haoxiang Zhang, and Tse-Hsun Chen. (2026). A Survey of Code Review Benchmarks and Evaluation Practices in Pre-LLM and LLM Era. ACM.  
+**Description:** Do not rely solely on static LLM text evaluations; integrate automated runtime environments (e.g., Docker sandboxes) to compile and test LLM-proposed revisions.  
+**Reasoning:** LLMs often suggest fixes that appear grammatically perfect and pass text-matching metrics but introduce logical deadlocks or fail to compile in reality.  
+**Example:** Automatically attempting to build a project with an LLM's suggested code revision to verify if it breaks existing functionality before presenting it to a human reviewer.  
 
 **Guideline 2.1.8: Enforce Human-in-the-Loop, especially for Low-Confidence Judgements**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Have LLM agents automatically flag nuanced, architectural, or high-stakes code changes for manual human review.
-**Reasoning:** While LLMs excel at high-volume routine checks (e.g., style formatting), they struggle with complex, subjective evaluations; flagging low-confidence items optimizes expert human time.
-**Example:** An automated review agent auto-approves a typo fix in a comment but pauses the pipeline and assigns a senior developer when it detects an uncertain change to the database schema.
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Have LLM agents automatically flag nuanced, architectural, or high-stakes code changes for manual human review.  
+**Reasoning:** While LLMs excel at high-volume routine checks (e.g., style formatting), they struggle with complex, subjective evaluations; flagging low-confidence items optimizes expert human time.  
+**Example:** An automated review agent auto-approves a typo fix in a comment but pauses the pipeline and assigns a senior developer when it detects an uncertain change to the database schema.  
 
 **Guideline 2.1.9: Utilize agent based frameworks where the agent acts as an orchestrator**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Building on the initial success of tool-augmented agents, a significant opportunity lies in creating frameworks where the LLM judge acts as an orchestrator, intelligently leveraging a wider array of external SE tools to form its judgments. This practice is still in its early stages and not yet widespread.
-**Reasoning:** agent-based could be used to create an evaluation pipeline and incorporate formal verification frameworks, model checkers, and performance profilers to assess code efficiency, including execution time and memory usage.
-**Example:** pioneering work like CodeVisionary has already integrated foundational tools like static linters and execution environments.
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Building on the initial success of tool-augmented agents, a significant opportunity lies in creating frameworks where the LLM judge acts as an orchestrator, intelligently leveraging a wider array of external SE tools to form its judgments. This practice is still in its early stages and not yet widespread.  
+**Reasoning:** agent-based could be used to create an evaluation pipeline and incorporate formal verification frameworks, model checkers, and performance profilers to assess code efficiency, including execution time and memory usage.  
+**Example:** pioneering work like CodeVisionary has already integrated foundational tools like static linters and execution environments.  
 
 **Guideline 2.1.10: Maintain the Original Context of the PR**  
 **Source:** Automated Code Review In Practice.pdf
-**Description:** Ensure that automated reviews do not suggest changes that alter the original intent or context of the pull request.
-**Reasoning:** Applying out-of-scope or irrelevant suggestions without careful consideration can introduce severe bugs or feature creep.
-**Example:** Rejecting an AI suggestion to refactor an entire database schema when the PR was simply meant to update a UI button color.
+**Description:** Ensure that automated reviews do not suggest changes that alter the original intent or context of the pull request.  
+**Reasoning:** Applying out-of-scope or irrelevant suggestions without careful consideration can introduce severe bugs or feature creep.  
+**Example:** Rejecting an AI suggestion to refactor an entire database schema when the PR was simply meant to update a UI button color.  
 
 **Guideline 2.1.11: Use AI Primarily for Quality and Standard Enforcement**  
-**Source:** Automated Code Review In Practice.pdf
-**Description:** Leverage LLM tools primarily for detecting quality problems and maintaining coding standards, rather than complex architectural judgments.
-**Reasoning:** Developers perceive automated code review tools as highly beneficial for these specific tasks, whereas they distrust AI for high-level logic.
-**Example:** Using the AI to automatically flag missing docstrings or hardcoded credentials.
+**Source:** Automated Code Review In Practice.pdf. 
+**Description:** Leverage LLM tools primarily for detecting quality problems and maintaining coding standards, rather than complex architectural judgments.  
+**Reasoning:** Developers perceive automated code review tools as highly beneficial for these specific tasks, whereas they distrust AI for high-level logic.  
+**Example:** Using the AI to automatically flag missing docstrings or hardcoded credentials.  
 
 **Guideline 2.1.12: Address Variable Renaming Bias**  
-**Source:** 3. Jiwon Moon, Yerin Hwang, Dongryeol Lee, Taegwan Kang, Yongil Kim, and Kyomin Jung. "Don’t Judge Code by Its Cover: Exploring Biases in LLM Judges for Code Evaluation." (2025)
-**Description:** Standardize variable names or ensure the LLM judge is robust to stylistically different but functionally equivalent naming conventions.
-**Reasoning:** Evaluators should remain robust to surface-level stylistic variations that do not affect underlying correctness.
-**Example:** Ensuring the LLM does not fail a code snipplet simply because it uses num_list instead of array_x.
+**Source:** 3. Jiwon Moon, Yerin Hwang, Dongryeol Lee, Taegwan Kang, Yongil Kim, and Kyomin Jung. "Don’t Judge Code by Its Cover: Exploring Biases in LLM Judges for Code Evaluation." (2025). 
+**Description:** Standardize variable names or ensure the LLM judge is robust to stylistically different but functionally equivalent naming conventions.  
+**Reasoning:** Evaluators should remain robust to surface-level stylistic variations that do not affect underlying correctness.  
+**Example:** Ensuring the LLM does not fail a code snippet simply because it uses num_list instead of array_x.  
 
 **Guideline 2.1.13: Expand Evaluation Beyond Functional Correctness**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:**  Prompt LLM judges to assess non-functional properties like readability, stylistic consistency, and fault tolerance.
-**Reasoning:** Code quality encompasses more than just functional output; maintainability and edge-case handling are equally important for long-term health.
-**Example:** Asking the LLM to evaluate how code manages unexpected exceptions and whether it adheres to specific formatting guidelines.
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:**  Prompt LLM judges to assess non-functional properties like readability, stylistic consistency, and fault tolerance.  
+**Reasoning:** Code quality encompasses more than just functional output; maintainability and edge-case handling are equally important for long-term health.  
+**Example:** Asking the LLM to evaluate how code manages unexpected exceptions and whether it adheres to specific formatting guidelines.  
 
 **Guideline 2.1.14: Use pseudocode to perform high level reviews.**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
 **Description:** Convert code into pseudocode, then recursively decomposes the pseudocode to assess the algorithm.  
-**Reasoning:** This allows the LLM judge to assess the core algorithm without being confused by complex, language-specific syntax.
-**Example:** MCTS-Judge reframes evaluation as a search problem, where the goal is to find the most reliable reasoning path. It uses Monte Carlo Tree Search to explore a tree of possible reasoning trajectories, where each path represents a unique sequence of evaluation sub-tasks (e.g., analyzing logic, then checking functionality).
+**Reasoning:** This allows the LLM judge to assess the core algorithm without being confused by complex, language-specific syntax.  
+**Example:** MCTS-Judge reframes evaluation as a search problem, where the goal is to find the most reliable reasoning path. It uses Monte Carlo Tree Search to explore a tree of possible reasoning trajectories, where each path represents a unique sequence of evaluation sub-tasks (e.g., analyzing logic, then checking functionality).  
 
 **Guideline 2.1.15: Use Advanced Prompting for Commit Messages**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Combine Chain-of-Thought reasoning and few-shot examples when asking an LLM to evaluate commit message quality.
-**Reasoning:** Good commit messages must explain both "what" a change does and "why" it was made; advanced prompting helps the LLM distinguish between superficial summaries and deeply informative messages. This also overcomes the problem where multiple, lexically different commit messages can be equally valid for a single code change.
-**Example:** Providing the LLM with internal documentation on commit messages, also three examples of good vs. bad commit messages before asking it to evaluate a new one.
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Combine Chain-of-Thought reasoning and few-shot examples when asking an LLM to evaluate commit message quality.  
+**Reasoning:** Good commit messages must explain both "what" a change does and "why" it was made; advanced prompting helps the LLM distinguish between superficial summaries and deeply informative messages. This also overcomes the problem where multiple, lexically different commit messages can be equally valid for a single code change.  
+**Example:** Providing the LLM with internal documentation on commit messages, also three examples of good vs. bad commit messages before asking it to evaluate a new one.  
 
 **Guideline 2.1.16: Use LLM-as-a-Judge agents in meta-evaluation roles**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge" for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Instead of making direct and high-stakes vulnerability judgments, as explored in prior studies, LLM-as-a-Judge are increasingly employed in meta-evaluation roles. 
-**Reasoning:** LLMs serve less as ultimate arbiters of security and more as scalable reviewers that enhance the reliability and interpretability of automated vulnerability analysis.
-**Example:** recent work demonstrates that LLMs can assess whether vulnerability explanations are logically consistent, sufficiently detailed, and clearly articulated. 
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge" for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Instead of making direct and high-stakes vulnerability judgments, as explored in prior studies, LLM-as-a-Judge are increasingly employed in meta-evaluation roles.  
+**Reasoning:** LLMs serve less as ultimate arbiters of security and more as scalable reviewers that enhance the reliability and interpretability of automated vulnerability analysis.  
+**Example:** recent work demonstrates that LLMs can assess whether vulnerability explanations are logically consistent, sufficiently detailed, and clearly articulated.  
 
 **Guideline 2.1.17: Instruct LLM orchestrator agents to use external tools for comprehensive evaluation**  
-**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge" for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).
-**Description:** Design the LLM judge as an orchestrator that interacts with external tools like performance profilers and formal verification frameworks.
-**Reasoning:** Relying exclusively on internal model knowledge is insufficient; runtime, linting, and visual information are crucial for comprehensive evaluation.
-**Example:** The LLM queries a performance profiler to assess the memory efficiency of a new sorting algorithm before writing its review.
-
-
+**Source:** Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun, Zhenchang Xing, Xiaoning Du, and David Lo. "LLM-as-a-Judge" for Software Engineering: Literature Review, Vision, and the Road Ahead." (2025).  
+**Description:** Design the LLM judge as an orchestrator that interacts with external tools like performance profilers and formal verification frameworks.  
+**Reasoning:** Relying exclusively on internal model knowledge is insufficient; runtime, linting, and visual information are crucial for comprehensive evaluation.  
+**Example:** The LLM queries a performance profiler to assess the memory efficiency of a new sorting algorithm before writing its review.  
 ---
 
 ### 2.2 Guidelines from Grey Literature / Practitioner Sources
 
 **Sources Explored:**  
-- `[Blog post 1]`  
-- `[Documentation 1]`  
-- `[Tool guide 1]`  
-- `[Community discussion 1]`
+- [1] Claude Code Docs, Code Review: https://code.claude.com/docs/en/code-review
+- [2] Review AI-generated code:  https://docs.github.com/en/copilot/tutorials/review-ai-generated-code
+- [3] Using GitHub Copilot code review: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review
 
 **Extracted Guidelines:**  
 **Guideline 2.2.1: Perform Functional Checks First**  
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Ensure code compiles and all automated tests and static analysis tools (e.g., CodeQL, Dependabot) pass before manually reviewing AI-generated code.
-**Reasoning:** Automated tools provide an objective baseline and catch simple erros more efficiently than human or artificial cognitive effort.
+**Source:** Review AI-generated code - GitHub Docs   
+**Description:** Ensure code compiles and all automated tests and static analysis tools (e.g., CodeQL, Dependabot) pass before manually reviewing AI-generated code.  
+**Reasoning:** Automated tools provide an objective baseline and catch simple errors more efficiently than human or artificial cognitive effort.  
 **Example:** 
 What functional tests to validate this code change do not exist or are missing?
 What functional tests to validate this code change do not exist or are missing?
 
 **Guideline 2.2.2: Verify context and intent** 
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Check that the AI-generated code fits the purpose and architecture of your project.
-Ask yourself: “Does this code solve the right problem? Does it follow our conventions?”
-Use your README, docs, and recent pull requests as a starting point for context for AI. Tell AI what sources to trust, what not to use, and give it good examples to work with.
-Try Synthesizing research to see how Copilot uses documentation and research to inform code generation.
-When asking AI to perform research and planning tasks, consider distilling the AI output into structured artifacts to then become context for future AI tasks such as code generation.
-**Reasoning:** Review the AI output to check if the output aligns with your requirements and design patterns.
+**Source:** Review AI-generated code - GitHub Docs   
+**Description:** Check that the AI-generated code fits the purpose and architecture of your project.  
+Ask yourself: “Does this code solve the right problem? Does it follow our conventions?”  
+Use your README, docs, and recent pull requests as a starting point for context for AI. Tell AI what sources to trust, what not to use, and give it good examples to work with.  
+Try Synthesizing research to see how Copilot uses documentation and research to inform code generation.  
+When asking AI to perform research and planning tasks, consider distilling the AI output into structured artifacts to then become context for future AI tasks such as code generation.  
+**Reasoning:** Review the AI output to check if the output aligns with your requirements and design patterns.  
 **Example Prompts**
 How does this refactored code section align with our project architecture?
-What similar features or established design patterns did you identify and model your code after?
-When examining this code, what assumptions about business logic, design preferences, or user behaviors have been made?
-What are the potential issues or limitations with this approach?
+What similar features or established design patterns did you identify and model your code after?  
+When examining this code, what assumptions about business logic, design preferences, or user behaviors have been made?  
+What are the potential issues or limitations with this approach?  
 
 **Guideline 2.2.3: Assess code quality**  
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Look for readability, maintainability, and clear naming.
-Avoid accepting code that is hard to follow or would take longer to refactor than to rewrite.
-Prefer code that is well-documented and includes clear comments.
-**Reasoning:** Code should adhere to with human and organizational standards. 
-**Example Prompts:** 
-What are some readability and maintainability issues in this code?
-How can this code be improved for clarity and simplicity? Suggest an alternative structure or variable names to enhance clarity.
-How could this code be broken down into smaller, testable units?
+**Source:** Review AI-generated code - GitHub Docs   
+**Description:** Look for readability, maintainability, and clear naming.  
+Avoid accepting code that is hard to follow or would take longer to refactor than to rewrite.  
+Prefer code that is well-documented and includes clear comments.  
+**Reasoning:** Code should adhere to human and organizational standards.  
+**Example Prompts:**   
+What are some readability and maintainability issues in this code?  
+How can this code be improved for clarity and simplicity? Suggest an alternative structure or variable names to enhance clarity.  
+How could this code be broken down into smaller, testable units?  
 
 **Guideline 2.2.4: Scrutinize dependencies**  
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Be vigilant with new packages and libraries.
-Check if suggested dependencies exist and are actively maintained. Consider the origins and contributors of new dependencies to ensure they come from reputable, non-competing sources.
-Review licensing. Avoid introducing code or dependencies that are incompatible with your project’s license (for example, AGPL-3.0 in a MIT licensed project, or dependencies with no declared license).
-Creating templates demonstrates how Copilot can assist with dependency setup, however it is good practice to always verify suggested packages yourself.
-Use GitHub Copilot code referencing to review matches with publicly available code.
-**Reasoning:** LLMs are suspectible to adding hallucinated or suspicious packages (such as packages that don't actually exist), or slopsquatting (a theoretical attack on LLMs using fake or malicious packages).
+**Source:** Review AI-generated code - GitHub Docs   
+**Description:** Be vigilant with new packages and libraries.  
+Check if suggested dependencies exist and are actively maintained. Consider the origins and contributors of new dependencies to ensure they come from reputable, non-competing sources.  
+Review licensing. Avoid introducing code or dependencies that are incompatible with your project’s license (for example, AGPL-3.0 in a MIT licensed project, or dependencies with no declared license).  
+Creating templates demonstrates how Copilot can assist with dependency setup, however it is good practice to always verify suggested packages yourself.  
+Use GitHub Copilot code referencing to review matches with publicly available code.  
+**Reasoning:** LLMs are susceptible to adding hallucinated or suspicious packages (such as packages that don't actually exist), or typosquatting (a theoretical attack on LLMs using fake or malicious packages).  
 **Example Prompts:** 
-Analyze the attached package.json file and list all dependencies with their respective licenses.
-Are each of the dependencies listed in this package.json file actively maintained (that is, not archived and have recent maintainer activity)?
+Analyze the attached package.json file and list all dependencies with their respective licenses.  
+Are each of the dependencies listed in this package.json file actively maintained (that is, not archived and have recent maintainer activity)?  
 
 **Guideline 2.2.5: Spot AI-specific pitfalls**  
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Look for hallucinated APIs, ignored constraints, or incorrect logic.
-Watch for tests that are deleted or skipped, instead of fixed.
-Be skeptical of code that “looks right” but doesn’t match your intent.
-**Reasoning:** AI tools can make unique mistakes.
-**Example Prompts:** 
-What was the reasoning behind the code change to delete the failing test? Suggest some alternatives that would fix the test instead of deleting it.
-What potential complexities, edge cases, or scenarios are there that this code might not handle correctly?
-What specific technical questions does this code raise that require human judgment or domain expertise to evaluate properly?
+**Source:** Review AI-generated code - GitHub Docs  
+**Description:** Look for hallucinated APIs, ignored constraints, or incorrect logic.  
+Watch for tests that are deleted or skipped, instead of fixed.  
+Be skeptical of code that “looks right” but doesn’t match your intent.  
+**Reasoning:** AI tools can make unique mistakes.  
+**Example Prompts:**  
+What was the reasoning behind the code change to delete the failing test? Suggest some alternatives that would fix the test instead of deleting it.  
+What potential complexities, edge cases, or scenarios are there that this code might not handle correctly?  
+What specific technical questions does this code raise that require human judgment or domain expertise to evaluate properly?  
 
 **Guideline 2.2.6: Use collaborative reviews**  
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Ask teammates to review complex or sensitive changes.
-Use checklists to ensure all key review points (functionality, security, maintainability) are covered.
-Share successful prompts and patterns for AI use across your team.
-**Reasoning:** Pairing and team input helps catch subtle issues.
-**Examples:** 
-Create templates to streamline your workflow and ensure consistency across your projects.
-create diagrams to better understand your data and communicate insights.
-create tables to organize information and present it clearly.
-synthesize research findings and insights from multiple sources into a cohesive summary.
-extract key information from issues and discussions.
+**Source:** Review AI-generated code - GitHub Docs  
+**Description:** Ask teammates to review complex or sensitive changes.  
+Use checklists to ensure all key review points (functionality, security, maintainability) are covered.  
+Share successful prompts and patterns for AI use across your team.  
+**Reasoning:** Pairing and team input helps catch subtle issues.  
+**Examples:**   
+Create templates to streamline your workflow and ensure consistency across your projects.  
+create diagrams to better understand your data and communicate insights.  
+create tables to organize information and present it clearly.  
+synthesize research findings and insights from multiple sources into a cohesive summary.  
+extract key information from issues and discussions.  
 
 **Guideline 2.2.7: Automate what you can and keep improving your workflow**  
-**Source:** Review AI-generated code - GitHub Docs 
-**Description:** Set up CI checks for style, linting, and security.
-Use Dependabot for dependency updates and alerts.
-Apply CodeQL or similar scanners for static analysis.
-Document your best practices for reviewing AI-generated code.
-Encourage “AI champions” on your team to share tips and workflows.
-Update your onboarding and contribution guides to include your AI review techniques and resources. Use a CONTRIBUTING.md file in your repository to document your expectations for AI-generated source code
-**Reasoning:** Let tools handle the repetitive work. Embracing new AI tools and techniques can make your workflow even more effective.
-**Example:** build a self-reviewing agent that evaluates draft pull requests against your standards, checking for accuracy, appropriate tone, and business logic before requesting human review.
+**Source:** Review AI-generated code - GitHub Docs  
+**Description:** Set up CI checks for style, linting, and security.  
+Use Dependabot for dependency updates and alerts.  
+Apply CodeQL or similar scanners for static analysis.  
+Document your best practices for reviewing AI-generated code.  
+Encourage “AI champions” on your team to share tips and workflows.  
+Update your onboarding and contribution guides to include your AI review techniques and resources. Use a CONTRIBUTING.md file in your repository to document your expectations for AI-generated source code.  
+**Reasoning:** Let tools handle the repetitive work. Embracing new AI tools and techniques can make your workflow even more effective.  
+**Example:** build a self-reviewing agent that evaluates draft pull requests against your standards, checking for accuracy, appropriate tone, and business logic before requesting human review.  
 
 **Guideline 2.2.8: Use REVIEW.md for Custom Review Rules**  
-**Source:** Code Review - Claude Code Docs 
-**Description:** Create a specific REVIEW.md file in the repository to dictate how the AI agent should review code, including severity calibration and reporting format. Keep the REVIEW.md file focused. 
-**Reasoning:** This overrides generic agent behavior, injecting review-only instructions directly into the pipeline with the highest priority.
-**Example:** 
-- Review instructions
+**Source:** Code Review - Claude Code Docs  
+**Description:** Create a specific REVIEW.md file in the repository to dictate how the AI agent should review code, including severity calibration and reporting format. Keep the REVIEW.md file focused.  
+**Reasoning:** This overrides generic agent behavior, injecting review-only instructions directly into the pipeline with the highest priority.  
+**Example:**  
+- Review instructions   
 - What Important means here
-Reserve Important for findings that would break behavior, leak data,
-or block a rollback: incorrect logic, unscoped database queries, PII
+Reserve Important for findings that would break behavior, leak data, or block a rollback: incorrect logic, unscoped database queries, PII
 in logs or error messages, and migrations that aren't backward
 compatible. Style, naming, and refactoring suggestions are Nit at
-most.
-- Cap the nits
+most.  
+- Cap the nits. 
 Report at most five Nits per review. If you found more, say "plus N
 similar items" in the summary instead of posting them inline. If
 everything you found is a Nit, lead the summary with "No blocking
-issues."
-- Do not report
-Anything CI already enforces: lint, formatting, type errors
-Generated files under `src/gen/` and any `*.lock` file
-Test-only code that intentionally violates production rules
-- Always check
-New API routes have an integration test
-Log lines don't include email addresses, user IDs, or request bodies
-Database queries are scoped to the caller's tenant
+issues."  
+- Do not report. 
+Anything CI already enforces: lint, formatting, type errors.  
+Generated files under `src/gen/` and any `*.lock` file.  
+Test-only code that intentionally violates production rules.  
+- Always check. 
+New API routes have an integration test.  
+Log lines don't include email addresses, user IDs, or request bodies.  
+Database queries are scoped to the caller's tenant.  
 
 **Guideline 2.2.9: Separate General Context from Review Instructions**  
-**Source:** Code Review - Claude Code Docs 
-**Description:** Keep general project context in AGENT.md (or a similarly named general purpose .md file) and strict review rules in REVIEW.md.
-**Reasoning:** Length has a cost; a long instructional file dilutes the rules that matter most.
-**Example:** Putting coding style guidelines in AGENT.md, but placing instructions on "what triggers a blocking review" in REVIEW.md.
+**Source:** Code Review - Claude Code Docs   
+**Description:** Keep general project context in AGENT.md (or a similarly named general purpose .md file) and strict review rules in REVIEW.md.  
+**Reasoning:** Length has a cost; a long instructional file dilutes the rules that matter most.  
+**Example:** Putting coding style guidelines in AGENT.md, but placing instructions on "what triggers a blocking review" in REVIEW.md.  
 
 **Guideline 2.2.10: Monitor Code Review Spending and Usage**  
-**Source:**  Code Review - Claude Code Docs 
-**Description:** Use analytics dashboards to track auto-resolved comments, PRs reviewed, and weekly costs associated with the AI tool.
-**Reasoning:** Helps organizations measure the ROI of the AI review tool and identify on which ares the technology is used more effectively.
-**Example:** Critical for managing budget and tool adoption.
+**Source:**  Code Review - Claude Code Docs.  
+**Description:** Use analytics dashboards to track auto-resolved comments, PRs reviewed, and weekly costs associated with the AI tool.  
+**Reasoning:** Helps organizations measure the ROI of the AI review tool and identify on which ares the technology is used more effectively.  
+**Example:** Critical for managing budget and tool adoption.  
 
 **Guideline 2.2.11: Configure Review Triggers and frequency**  
-**Source:**  Code Review - Claude Code Docs 
-**Description:** Configure when the AI review should be triggered (e.g., on every push, only on PRs) and how often it should run (e.g., daily, weekly).
-**Reasoning:** Reviewing on every push runs the most reviews and costs the most. Manual mode is useful for high-traffic repos where you want to opt specific PRs into review, or to only start reviewing your PRs once they’re ready.
+**Source:**  Code Review - Claude Code Docs.  
+**Description:** Configure when the AI review should be triggered (e.g., on every push, only on PRs) and how often it should run (e.g., daily, weekly).    
+**Reasoning:** Reviewing on every push runs the most reviews and costs the most. Manual mode is useful for high-traffic repos where you want to opt specific PRs into review, or to only start reviewing your PRs once they’re ready.  
 **Example:** 
-Once after PR creation: review runs once when a PR is opened or marked ready for review
-After every push: review runs on every push to the PR branch, catching new issues as the PR evolves and auto-resolving threads when you fix flagged issues
-Manual: reviews start only when someone triggers a review.
+Once after PR creation: review runs once when a PR is opened or marked ready for review.  
+After every push: review runs on every push to the PR branch, catching new issues as the PR evolves and auto-resolving threads when you fix flagged issues.  
+Manual: reviews start only when someone triggers a review.  
 
 **Guideline 2.2.12: Standardize the Summary Shape for Quick Triaging**  
-**Source:**  Code Review - Claude Code Docs 
-**Description:** Have the agent create summaries of the reviews. 
-**Reasoning:** The author wants to know the shape of the work before the details.
-**Example:** ask for the review body to open with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.
+**Source:**  Code Review - Claude Code Docs  
+**Description:** Have the agent create summaries of the reviews.  
+**Reasoning:** The author wants to know the shape of the work before the details.  
+**Example:** Ask for the review body to open with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case.  
 
 **Guideline 2.2.13: Tune the Severity Levels**  
-**Source:**  Code Review - Claude Code Docs 
-**Description:** redefine what Important means for your repo. The default calibration targets production code; a docs repo, a config repo, or a prototype might want a much narrower definition. State explicitly which classes of finding are Important and which are Nit at most. You can also escalate in the other direction.
-**Reasoning:** Tune the review agents to your and your teams needs. 
-**Example:** Treat any AGENT.md violation as Important rather than the default nit. 
+**Source:**  Code Review - Claude Code Docs   
+**Description:** redefine what Important means for your repo. The default calibration targets production code; a docs repo, a config repo, or a prototype might want a much narrower definition. State explicitly which classes of finding are Important and which are Nit at most. You can also escalate in the other direction.  
+**Reasoning:** Tune the review agents to your and your teams needs.   
+**Example:** Treat any AGENT.md violation as Important rather than the default nit.   
 
 **Guideline 2.2.14: Leverage Local Reviews for Uncommitted Changes**  
-**Source:** Using GitHub Copilot code review - GitHub Docs
-**Description:** Utilize IDE integrations (such as Visual Studio Code, JetBrains, or Xcode) to request Copilot code reviews on highlighted code snippets or uncommitted/unstaged changes before pushing to a branch.
-**Reasoning:** Reviewing code locally helps catch bugs, style violations, and potential issues earlier in the development lifecycle, reducing the volume of noisy commits and back-and-forth review cycles during the actual pull request phase.
-**Example:** Tn Visual Studio Code, navigating to the Source Control view and clicking the "Copilot Code Review - Uncommitted Changes" button to get inline problem reports on local edits before running a git commit command.
+**Source:** Using GitHub Copilot code review - GitHub Docs.  
+**Description:** Utilize IDE integrations (such as Visual Studio Code, JetBrains, or Xcode) to request Copilot code reviews on highlighted code snippets or uncommitted/unstaged changes before pushing to a branch.  
+**Reasoning:** Reviewing code locally helps catch bugs, style violations, and potential issues earlier in the development lifecycle, reducing the volume of noisy commits and back-and-forth review cycles during the actual pull request phase.  
+**Example:** Tn Visual Studio Code, navigating to the Source Control view and clicking the "Copilot Code Review - Uncommitted Changes" button to get inline problem reports on local edits before running a git commit command.  
 
 ---
 
@@ -558,16 +557,36 @@ This subsection documents only our **agentic PR review prototype**. It does not 
 ## 3. References
 
 **Literature References:**  
-[1] `[Full citation]`  
-[2] `[Full citation]`  
-https://aclanthology.org/2024.findings-eacl.148.pdf 
+[1] Cihan, Umut, et al. "Automated code review in practice." 2025 IEEE/ACM
+47th International Conference on Software Engineering: Software
+Engineering in Practice (ICSE-SEIP). IEEE, 2025.
+https://arxiv.org/abs/2412.18531  
+[2] Junda He, Jieke Shi, Terry Yue Zhuo, Christoph Treude, Jiamou Sun,
+Zhenchang Xing, Xiaoning Du, and David Lo. 2026. LLM-as-a-Judge for
+Software Engineering: Literature Review, Vision, and the Road Ahead. ACM
+Trans. Softw. Eng. Methodol. Just Accepted (February 2026).
+https://doi.org/10.1145/3797276  
+[3] Jiwon Moon, Yerin Hwang, Dongryeol Lee, Taegwan Kang, Yongil Kim, and
+Kyomin Jung. 2026. Don’t Judge Code by Its Cover: Exploring Biases in
+LLM Judges for Code Evaluation. In Findings of the Association for
+Computational Linguistics: EACL 2026, pages 1364–1389, Rabat, Morocco.
+Association for Computational Linguistics.  
+[4] Jaoua, Imen, Oussama Ben Sghaier, and Houari Sahraoui. "Combining
+large language models with static analyzers for code review generation."
+2025 IEEE/ACM 22nd International Conference on Mining Software
+Repositories (MSR). IEEE, 2025.  
+[5] Khan, Taufiqul Islam, et al. "A Survey of Code Review Benchmarks and
+Evaluation Practices in Pre-LLM and LLM Era." arXiv preprint
+arXiv:2602.13377 (2026).  
+[6] Zhuo, T.Y. (2023). ICE-Score: Instructing Large Language Models to Evaluate Code. Findings.  
 
 **Grey Literature References:**  
-[1] `[Blog post title and URL]`  
-[2] `[Documentation title and URL]`  
+[1] Claude Code Docs, Code Review: https://code.claude.com/docs/en/code-review
+[2] Review AI-generated code:  https://docs.github.com/en/copilot/tutorials/review-ai-generated-code
+[3] Using GitHub Copilot code review: https://docs.github.com/en/copilot/how-tos/use-copilot-agents/request-a-code-review/use-code-review
 
 **LLM Prompts (Full Log):**  
-See Appendix A or provide a link to a separate file with full prompt-response logs.
+LLM Prompts and responses were recorded in the pull requests. 
 
 ---
 
@@ -587,52 +606,31 @@ See Appendix A or provide a link to a separate file with full prompt-response lo
 
 
 - **C. Conflicts Resolved:** Examples of contradictory guidelines and how you resolved them
-1.  LLMs as Code Review or Orchestrators:
-2.1.11 suggests using AI Primarily for Quality and Standard Enforcement
-2.1.1, 2.1.17 suggest to use static tools for non-cognitive tasks, and use the reasoning ability of LLMs for cognitive and agentic tasks. 
+1. LLMs as Code Review or Orchestrators:
+Guideline 2.1.11 suggests using AI primarily for Quality and Standard Enforcement.
+Guidelines 2.1.1, 2.1.17 suggest using static tools for non-cognitive tasks, and using the reasoning ability of LLMs for cognitive and agentic tasks. 
 
 Resolution: Dedicated tools are more than capable of handling simple quality checks. LLMs should be used for either more complex tasks that require reasoning or as an agent that orchestrates other tools. 
 
 2. Scope of AI Capability (High-level vs. Low-level):
 Guideline 2.1.11 explicitly states to use AI primarily for quality/standards and to distrust it for high-level logic.
-Guideline 2.1.14 and 2.1.17 conversely suggest using AI for high-level reviews via pseudocode decomposition and orchestrating complex evaluations.
+Guidelines 2.1.14 and 2.1.17 conversely suggest using AI for high-level reviews via pseudocode decomposition and orchestrating complex evaluations.
 
-Resolution: Similar to the previous conflict, we decided to utilize Agents in high scope tasks due their reasoning capabilities. 
+Resolution: Similar to the previous conflict, we decided to utilize agents in high-scope tasks due to their reasoning capabilities. 
 
 3. Human Intervention vs. Automation:
-Guideline 2.1.8  mandates a Human-in-the-Loop for any subjective evaluation.
-Guideline 2.2.7 proposes an approach where ai agents are freer to self evaluate and automation is king.
+Guideline 2.1.8 mandates a Human-in-the-Loop for any subjective evaluation.
+Guideline 2.2.7 proposes an approach where AI agents are freer to self-evaluate and automation is king.
 
-Resolution: We decided to combine two approaches, and give LLM agents a constrained space and specific requirements to fulfill agents are allowed to commit on their own. 
+Resolution: We decided to combine the two approaches, and give LLM agents a constrained space and specific requirements to fulfill before they are allowed to commit on their own. 
 
-4. Instruction Density (Comprehensive vs. Focused)
-Guideline 2.1.4 advocates for highly detailed, structured prompts
-Guideline 2.2.9 arns that length has a cost and favors short, focused rules.
+4. Instruction Density (Comprehensive vs. Focused):
+Guideline 2.1.4 advocates for highly detailed, structured prompts.
+Guideline 2.2.9 warns that length has a cost and favors short, focused rules.
 
-Resolution: Fuse two approaches. While context window "dilution" is a real technical risk, the lack of structure is a much greater risk for reliability. Use metrics such as ICE-scores and better prompt engineering to improve performance by providing shorter and more precise instructions. 
+Resolution: Fuse the two approaches. While context window "dilution" is a real technical risk, the lack of structure is a much greater risk for reliability. Use metrics such as ICE-scores and better prompt engineering to improve performance by providing shorter and more precise instructions. 
 
-
----
-
-## Instructions for Use
-
-1. **Replace all `[...]` placeholders** with your team's specific content
-2. **Number guidelines consecutively** (Guideline 1, Guideline 2, etc.)
-3. **Cite sources properly** using academic citation style (e.g., APA, ACM)
-4. **Include concrete examples** - code or textual snippets (depending on SE task) are highly recommended
-5. **Be specific about applicability** - when does this guideline work vs. fail?
-6. **Submit as `Topic-XX_Guidelines.md`** where `XX` is your topic number
 
 ---
 
-## Grading Criteria (for your reference)
-
-- ✅ **Clarity:** Guidelines are specific and actionable
-- ✅ **Evidence:** Each guideline is supported by reasoning and examples
-- ✅ **Curation:** Shows thoughtful merging of multiple sources
-- ✅ **Practicality:** Examples are relevant to real development tasks
-- ✅ **Transparency:** Raw guidelines from all three sources are included
-
----
-
-*Template version: 1.0 | Last updated: 24 February 2026*
+*Last updated: 03 May 2026*
