@@ -168,9 +168,10 @@ def _anchor_cells(state: GameState, player: str) -> set[Coordinate]:
     if is_first_move(state, player):
         return {state.start_corners[player]}
 
-    occupied = get_occupied_cells(state, player)
+    # Only same-color occupancy matters for anchor eligibility.
+    occupied_same_color = get_occupied_cells(state, player)
     anchors: set[Coordinate] = set()
-    for x, y in occupied:
+    for x, y in occupied_same_color:
         for dx, dy in DIAGONAL_DELTAS:
             anchor = (x + dx, y + dy)
             ax, ay = anchor
@@ -180,7 +181,11 @@ def _anchor_cells(state: GameState, player: str) -> set[Coordinate]:
             if state.board[ay][ax] is not None:
                 continue
             # Avoid re-reading the occupied-cell cache for every candidate anchor.
-            if any((ax + odx, ay + ody) in occupied for odx, ody in ORTHOGONAL_DELTAS):
+            # Opponent orthogonal adjacency is allowed in Blokus; only same-color edge contact is illegal.
+            if any(
+                (ax + odx, ay + ody) in occupied_same_color
+                for odx, ody in ORTHOGONAL_DELTAS
+            ):
                 continue
             anchors.add(anchor)
     return anchors

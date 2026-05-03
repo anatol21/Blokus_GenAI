@@ -113,20 +113,47 @@ class EngineRuleTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("touch at least one same-color piece at a corner", result.reason)
 
-    def test_anchor_cells_are_empty_and_in_bounds(self) -> None:
+    def test_anchor_cells_are_empty_in_bounds_and_avoid_same_color_edge_contact(self) -> None:
         state = play_standard_opening_cycle()
 
         anchors = _anchor_cells(state, "blue")
+        orthogonal = ((1, 0), (-1, 0), (0, 1), (0, -1))
         occupied_all = {
             (x, y)
             for y, row in enumerate(state.board)
             for x, cell in enumerate(row)
             if cell is not None
         }
+        occupied_blue = {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell == "blue"
+        }
         self.assertTrue(anchors.isdisjoint(occupied_all))
         self.assertTrue(
             all(0 <= x < state.board_size and 0 <= y < state.board_size for x, y in anchors)
         )
+        self.assertTrue(
+            all(
+                all((ax + dx, ay + dy) not in occupied_blue for dx, dy in orthogonal)
+                for ax, ay in anchors
+            )
+        )
+
+    def test_anchor_cells_allow_opponent_orthogonal_adjacency(self) -> None:
+        state = play_standard_opening_cycle()
+
+        # (1, 1) is a natural blue anchor (diagonal from blue's opening at (0, 0)).
+        expected_anchor = (1, 1)
+
+        # Place an opponent square orthogonally adjacent to that anchor.
+        # This must not disqualify the anchor because only same-color edge contact is illegal.
+        state.board[0][1] = "yellow"
+        state.occupied_cells_by_player["yellow"].add((1, 0))
+
+        anchors = _anchor_cells(state, "blue")
+        self.assertIn(expected_anchor, anchors)
 
     def test_list_legal_moves_returns_valid_moves_after_opening(self) -> None:
         state = play_standard_opening_cycle()
