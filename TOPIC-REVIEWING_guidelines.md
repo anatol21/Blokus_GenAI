@@ -19,53 +19,10 @@
 
 > **Note:** These are the merged, refined guidelines that your team recommends to the class. Each guideline should be actionable, specific, and usable during real SE/coding tasks.
 
-### Guideline 0.1: Combine Static Analysis with LLM Reviews (Hybrid Approach)
-
-**Description:**  
-Static analysis tools  (e.g., linters, CodeQL, PMD) should be integrated in
-Developers should execute static analysis tools (e.g., linters, CodeQL, PMD) first, and inject their outputs into the LLM's prompt to generate context-aware and standards-compliant code review comments.
-
-**Reasoning:**  
-Relying solely on LLMs for code review can provide broad issue coverage but often at the expense of precision and functional correctness (1, 2). Conversely, Knowledge-Based Systems (KBS) like static analyzers provide highly precise, rule-based feedback but are limited in scope (1). Combining them using Retrieval-Augmented Generation (RAG) allows the LLM to ground its natural language feedback in deterministic, structured knowledge, significantly improving the accuracy and comprehensiveness of the review(1). Furthermore, starting reviews with functional checks and automated tests ensures the code compiles before the AI attempts to review logic (3).
-
-**Example:**  
-[Static Analyzer Output]: 
-Line 42: Potential null pointer dereference.
-[Code Diff]: 
-+ return user.getAddress().getZipCode();
-
-Prompt for Hybrid Code Review
-You are an expert code reviewer. 
-Review the following code diff. 
-Use the provided static analyzer warnings to guide your feedback.
-
-**When to Apply:**  
-Apply this guideline in continuous integration (CI) pipelines where static analysis tools are already integrated, and you want to provide human-readable, contextual explanations for the flagged warnings.
-**When to Avoid:**  
-Avoid this if the static analyzer produces excessive false positives (noise), as feeding these into the LLM might cause it to hallucinate or generate overly pedantic review comments.
-
-### Guideline 0.2: Calibrate Triage and Cap Findings
-
-**Description:**  
-Define a strict hierarchy of findings (Critical, Supporting, Trivial) and cap the number of "Nit" (minor) comments to prevent "reviewer fatigue" and "hallucinated nitpicking."
-
-**Reasoning:**  
-LLMs are "eager to please" and will find issues even where none exist just to provide a long response. Weighting forces the model to focus on what actually breaks the build.
-
-**Example:**  
-Set a hard limit: "Generate a maximum of 5 Nit comments. If more issues are found, prioritize them or group them." 
-
-**When to Apply:**  
-Apply this guideline when using LLMs for large code reviews or in CI/CD pipelines where review volume needs to be controlled.
-
-**When to Avoid:**  
-Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
-
-
 ### Guideline 1: Implement Agentic AI for Orchestration of Dedicated Review Tasks
--> triggers automatically
+
 **Description:**  
-Use a central orchestrator agent to delegate specific review tasks to specialized sub-agents (e.g., security, performance, style), and use static code analysis tools to provide deterministic inputs and ensure comprehensive coverage without overwhelming a single model.
+Use a central orchestrator agent to delegate specific review tasks to specialized sub-agents (e.g., security, performance, style), and use static code analysis tools to provide deterministic inputs and ensure comprehensive coverage without overwhelming a single model. The agent could be setup to be  triggered automatically for each merge request, PR or commit.
 
 **Reasoning:**  
 Complex code reviews require expertise across multiple domains (security, performance, maintainability). A single LLM prompt struggles to cover all aspects deeply. By using an orchestrator, you can leverage specialized agents and static code analysis tools that are fine-tuned or prompted for specific tasks, improving the quality and depth of the review.
@@ -78,12 +35,12 @@ Orchestrator Agent: "Review this pull request for syntax, security vulnerabiliti
 - Style Agent: Ensures adherence to project coding standards.
 
 **When to Apply:**  
-Apply this guideline when reviewing large or complex codebases where multiple review dimensions need to be considered. It is particularly useful in CI/CD pipelines where automated, multi-faceted reviews are required.
+Apply this guideline when reviewing large or complex codebases where multiple review dimensions need to be considered. It is particularly useful in CI/CD pipelines where automated, multi-faceted reviews are wished.
 
 **When to Avoid:**  
-Avoid this for very small or simple code changes where the overhead of managing multiple agents may outweigh the benefits. In such cases, a single, well-crafted prompt to a general-purpose LLM may suffice.
+Avoid this for very small or simple code changes where the overhead of managing multiple agents may outweigh the benefits. In such cases, a single, well-crafted prompt to a general-purpose LLM or just using a static code review agent may suffice.
 
-### Guideline 2: Give an output format and priorititize findings
+### Guideline 2: Give an output format and prioritize findings
 
 **Description**
 Define a strict hierarchy of findings (Critical, Supporting, Trivial) and cap the number of "Nit" (minor) comments to prevent "reviewer fatigue" and "hallucinated nitpicking". Similarly, define an output format that is human-oriented and informative. 
@@ -119,7 +76,6 @@ Apply this guideline when using LLMs for large code reviews or in CI/CD pipeline
 
 **When to Avoid**
 Avoid this if the goal is to capture every possible minor stylistic issue, or if the review context is a small, isolated code change where "nitpicks" might actually be valuable.
-
 
 ### Guideline 3: Ensure the code does not have any misleading or bias inducing comments
 -> check more bias clusters and focus on biases instead of only this kind of bias where seniority or correctness is implied
@@ -164,18 +120,41 @@ Avoid this if the goal is to capture every possible minor stylistic issue, or if
 **Description**
 LLM agents are highly able, and can perform many tasks without human involvement. Accountability, and the shortcomings of the AI technology however, still requires human involvement. Human involvement could however be optimized by implementing checks and breakpoints during the automated review process. 
 The results of all suggestions of a reviewing agents must be evaluated by other agents with different personas according to these two criteria:
-1) Confidence of the Agent 
-2) Criticality of the Change, as defined by the developers in the review.md file.  
+1) Confidence of the Change 
+2) Criticality of the Change  
 
 Criticality stands for how likely is it that the change will affect a crucial process or a result in a dangerous state for the code snipplet or section being changed, whereas confidence score represents how sure the agent is that its review and suggestion fits the original context and does not introduce additional errors. 
 
-Agents could be allowed to implement high confidence reviews without human review, but if the criticality is high, or medium, the confidence should be capped so that a human review is still needed. 
+Agents could be allowed to implement high confidence and low criticality reviews without human review, but if the criticality is high, or medium, the confidence should be capped so that a human review is still needed.
 
+
+
+Confidence:
+
+
+LLM as a judge should then decide to implement the change or trigger a human check by evaluating the different scores by these different agents. 
 **Reasoning**
 LLM Agents are highl developed solutions that could be trusted with many tasks, among them automatic detection and implementation of small scale changes that are low risk, such as high-volume routine checks (e.g., style formatting). However, there is evidence that they struggle with complex, subjective evaluations. Therefore, LLM Agents should not be allowed to implement such evaluations and reviews without human supervision. 
 
 **Example:** 
-An automated review agent auto-approves a typo fix or the addition of an edge-case logic, but stops and triggers additional agents with different personas for reviews that are not low in criticality. A review agent with senior software developer persona triggers the senior architect agent to go over the criticality of a change. Both agents assign a criticality and a confidence value to the change, and this is then reported to a human evaluator. 
+
+Criticality: Score the change out of then on following criteria:
+0.1–0.3 (Low): UI changes, documentation, or non-functional refactors in isolated modules.
+
+0.4–0.7 (Medium): Changes to business logic, API schema updates, or new library dependencies.
+
+0.8–1.0 (High): Modifications to Authentication, Database migrations, PII handling, or Core Financial logic.
+
+Confidence: 
+Start with 1 and deduct points based on the following criteria: 
+Missing Context: Subtract 0.2 if the implementation depends on external functions not provided in the prompt.
+
+Complex Logic: Subtract 0.1 for every nested loop or recursive call where state is hard to track.
+
+Heuristic Mismatch: Subtract 0.3 if the code violates a "Should" rule in AGENT.md but technically compiles.
+
+An automated review agent auto-approves a typo fix or the addition of an edge-case logic, but stops and triggers additional agents with different personas for reviews that are not low in criticality. A review agent with senior software developer persona triggers the senior architect agent to go over the criticality of a change. Both agents assign a criticality and a confidence value to the change, and this is then reported to a human evaluator alongside the summary of the change by two different personas. 
+
 
 **When to Apply**
 In complex code environments with complex logic utilizing automated code agents. 
@@ -190,34 +169,25 @@ Create a concise, short, and separate review.md file specifically tailored for r
 
 **Reasoning:** This overrides generic agent behavior, injecting review-only instructions directly into the pipeline with the highest priority. Specificity and concise descriptions matter because length has a cost and a long instructional file dilutes the rules that matter most.
 
-**Example**
-REVIEW.md
-Persona: Act as a Senior Performance Engineer.
-
 Definitions: "Important" means any change affecting the DB_Connector or Auth modules.
 
 Exclusions: Ignore any formatting issues in /src/gen.
 
 Custom Check: Always verify that new API endpoints have an associated integration test.
 
-Criticality: Score the change out of then on following criteria:
-0.1–0.3 (Low): UI changes, documentation, or non-functional refactors in isolated modules.
+**Example**
+REVIEW.md
+Severity: redefine what 🔴 Important means for your repo. The default calibration targets production code; a docs repo, a config repo, or a prototype might want a much narrower definition. State explicitly which classes of finding are Important and which are Nit at most. You can also escalate in the other direction, for example treating any CLAUDE.md violation as Important rather than the default nit.
+Nit volume: cap how many 🟡 Nit comments a single review posts. Prose and config files can be polished forever. A cap like “report at most five nits, mention the rest as a count in the summary” keeps reviews actionable.
+Skip rules: list paths, branch patterns, and finding categories where Claude should post no findings. Common candidates are generated code, lockfiles, vendored dependencies, and machine-authored branches, along with anything your CI already enforces like linting or spellcheck. For paths that warrant some review but not full scrutiny, set a higher bar instead of skipping entirely: “in scripts/, only report if near-certain and severe.”
+Repo-specific checks: add rules you want flagged on every PR, like “new API routes must have an integration test.” Because REVIEW.md is injected as highest priority, these land more reliably than the same rules in a long CLAUDE.md.
+Verification bar: require evidence before a class of finding is posted. For example, “behavior claims need a file:line citation in the source, not an inference from naming” cuts false positives that would otherwise cost the author a round trip.
+Re-review convergence: tell Claude how to behave when a PR has already been reviewed. A rule like “after the first review, suppress new nits and post Important findings only” stops a one-line fix from reaching round seven on style alone.
+Summary shape: ask for the review body to open with a one-line tally such as 2 factual, 4 style, and to lead with “no factual issues” when that’s the case. The author wants to know the shape of the work before the details.
 
-0.4–0.7 (Medium): Changes to business logic, API schema updates, or new library dependencies.
-
-0.8–1.0 (High): Modifications to Authentication, Database migrations, PII handling, or Core Financial logic.
-
-Confidence: Start with 1 and deduct points based on the following criteria: 
-Missing Context: Subtract 0.2 if the implementation depends on external functions not provided in the prompt.
-
-Complex Logic: Subtract 0.1 for every nested loop or recursive call where state is hard to track.
-
-Heuristic Mismatch: Subtract 0.3 if the code violates a "Should" rule in AGENT.md but technically compiles.
-
-LLM as a judge should then decide to implement the change or trigger a human check by evaluating the different scores by these different agents. 
 
 **When to Apply**
-When using specialized LLM Agents such as orchestrator and specialized sub-agents.
+When using LLM Agents such as orchestrator and specialized sub-agents for code reviews.
 
 **When to Avoid**
 During earlier stages of the project, when review is not delegated to LLM agents, and for simple repositories. 
