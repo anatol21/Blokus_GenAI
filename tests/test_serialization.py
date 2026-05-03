@@ -3,12 +3,33 @@ from pathlib import Path
 from typing import cast
 import unittest
 
-from blokus.engine import apply_move, new_game
+from blokus.engine import apply_move, get_occupied_cells, new_game
 from blokus.models import GameState, Move
 from blokus.review.types import Finding, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def board_occupied_cells(state: GameState):
+    """Derive occupied cells by scanning the board (not cache-backed helpers)."""
+
+    expected_all = {
+        (x, y)
+        for y, row in enumerate(state.board)
+        for x, cell in enumerate(row)
+        if cell is not None
+    }
+    expected_by_player = {
+        player: {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell == player
+        }
+        for player in state.players
+    }
+    return expected_all, expected_by_player
 
 
 class SerializationTests(unittest.TestCase):
@@ -48,6 +69,26 @@ class SerializationTests(unittest.TestCase):
         self.assertEqual(reloaded.to_dict(), state.to_dict())
         self.assertEqual(reloaded.controller_types["blue"], "computer")
         self.assertEqual(reloaded.controller_strategies["blue"], "default")
+
+    def test_round_tripped_state_rebuilds_occupied_cells_cache_from_board(self) -> None:
+        state = new_game()
+        for move in (
+            Move("blue", "I1", 0, 0),
+            Move("yellow", "I1", 19, 0),
+            Move("red", "I1", 19, 19),
+            Move("green", "I1", 0, 19),
+            Move("blue", "I2", 1, 1),
+        ):
+            state = apply_move(state, move)
+
+        reloaded = GameState.from_dict(state.to_dict())
+        expected_all, expected_by_player = board_occupied_cells(reloaded)
+
+        for player in reloaded.players:
+            self.assertEqual(reloaded.occupied_cells_by_player[player], expected_by_player[player])
+            self.assertEqual(get_occupied_cells(reloaded, player), expected_by_player[player])
+
+        self.assertEqual(get_occupied_cells(reloaded), expected_all)
 
     def test_invalid_board_symbol_is_rejected(self) -> None:
         payload = self.load_initial_payload()
