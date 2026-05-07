@@ -1,0 +1,46 @@
+# Blokus Duo: Technical Requirements Extraction
+
+This document outlines the specific requirements, constraints, and invariants for the "Blokus Duo" mode, based on the provided context and project standards.
+
+## 1. Functional Requirements
+
+Duo mode is an extension of the core Blokus engine, requiring specific configuration for a 2-player competitive environment.
+
+| ID | Requirement Description | Source |
+| :--- | :--- | :--- |
+| **R-F-12.1** | **Board Size:** The board for Duo mode shall be a square grid of 14x14 cells. | User Context |
+| **R-F-12.2** | **Player Count:** Duo mode shall support exactly 2 players. | User Context |
+| **R-F-12.3** | **Starting Positions:** The initial moves for the two players must cover the designated starting squares at (5,5) and (9,9) (0-indexed). | User Context |
+| **R-F-12.4** | **Piece Set:** Each player shall use the standard set of 21 Blokus pieces (monomino to pentominoes). | User Context |
+| **R-F-12.5** | **GUI Adaptation (Colors):** The user interface shall be restricted to display only 2 active player colors (e.g., Violet and Orange, or as configured). The 4-player color indicators must be replaced with a 2-player layout. | User Context |
+| **R-F-12.6** | **GUI Adaptation (Layout):** The board rendering and piece racks must be adjusted to focus on the 2 active players, removing visual clutter from the 2 unused slots. | User Context |
+| **R-F-14.1** | **Configurable Engine:** The transition from Classic to Duo must be handled via configuration (e.g., `DUO_CONFIG`) within the same engine logic, rather than a separate codebase. | R-F-14 |
+
+## 2. Constraints
+
+| ID | Constraint Description | Source |
+| :--- | :--- | :--- |
+| **R-C-01** | **No LLM Runtime:** The delivered solution must have no dependency on an LLM runtime for its execution or logic. | Project Baseline |
+| **R-C-05** | **Language Baseline:** The implementation must remain in plain Python, adhering to the Phase 1 & 2 scope. | Project Baseline |
+| **R-C-06** | **Performance:** Piece placement and move validation in Duo mode must feel immediate to the user (maintaining R-NF-14 parity). | Derived |
+
+## 3. Invariants
+
+Invariants are rules that must remain true throughout the game session to ensure correctness.
+
+| ID | Invariant Description |
+| :--- | :--- |
+| **I-D-01** | **Corner Contact:** Every piece (after the first) must touch at least one other piece of the same color at a corner. |
+| **I-D-02** | **No Edge Contact:** No piece can be placed such that it touches another piece of the same color along an edge. |
+| **I-D-03** | **Occupancy:** A cell on the 14x14 board can be occupied by at most one piece at any time. |
+| **I-D-04** | **Piece Uniqueness:** Each of the 21 pieces in a player's rack can be used exactly once per game. |
+| **I-D-05** | **Turn Order:** Players must strictly alternate turns until the game end conditions are met. |
+| **I-D-06** | **Termination:** The game ends when neither player has any legal moves remaining. |
+
+## 4. GUI Change Specifications
+
+Specifically for the 2-player setup:
+- **Board View:** Center the 14x14 grid in the display area.
+- **Player Stats/Racks:** Display only the two active players (e.g., Player 1 and Player 2).
+- **Color Indicators:** If the Classic UI shows 4 color dots/indicators (e.g., in the upper right), these must be reduced to 2 to reflect the active participants.
+- **Starting Square Highlights:** The GUI should optionally highlight the (5,5) and (9,9) squares during the first turn of each player to guide onboarding.
