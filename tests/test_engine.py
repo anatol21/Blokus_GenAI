@@ -717,6 +717,23 @@ class EngineRuleTests(unittest.TestCase):
                     self.assertNotIn(player, state.remaining_pieces)
                     self.assertEqual(state.current_player, serialized_before["current_player"])
 
+    def test_list_legal_moves_with_zero_limit_is_still_empty_for_unknown_and_finished_contexts(self) -> None:
+        """Evidence: LIST-03, LIST-04, R-F-06, R-T-06."""
+
+        cases = [
+            (*_unknown_player_classic_state(), "unknown-player"),
+            (*_finished_classic_state(), "finished-game"),
+        ]
+
+        for state, player, case_id in cases:
+            with self.subTest(case_id=case_id):
+                serialized_before = _serialized_snapshot(state)
+
+                moves = list_legal_moves(state, player=player, limit=0)
+
+                self.assertEqual(moves, [])
+                self.assertEqual(state.to_dict(), serialized_before)
+
     def test_initial_scores_reflect_all_remaining_squares(self) -> None:
         scores = compute_scores(new_game())
         self.assertEqual(scores, {player: -89 for player in scores})
