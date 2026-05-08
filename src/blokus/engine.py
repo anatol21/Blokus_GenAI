@@ -193,6 +193,8 @@ def list_legal_moves(
     active_player = player or state.current_player
     if active_player not in state.players or state.finished:
         return []
+    if limit is not None and limit <= 0:
+        return []
 
     anchors = _anchor_cells(state, active_player)
     legal_moves: list[Move] = []
