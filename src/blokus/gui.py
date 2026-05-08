@@ -35,10 +35,14 @@ BASE_SIDEBAR_BOUNDS = {
     "instructions": (25, 690, 214, 760),
 }
 BASE_PLAYER_ICON_POSITIONS = {
-    "blue": (1250, 110),
-    "yellow": (1380, 110),
-    "green": (1250, 200),
-    "red": (1380, 200),
+    "blue": (1345, 108),
+    "yellow": (1463, 112),
+    "green": (1346, 201),
+    "red": (1463, 204),
+}
+SCORE_TEXT_X = {
+    "blue": 1311, "green": 1311,
+    "yellow": 1429, "red": 1429,
 }
 PLAYER_ORDER = ("blue", "yellow", "red", "green")
 ROBOT_ICON_KEY = {
@@ -236,34 +240,38 @@ class BlokusGui:
         )
 
     def draw_sidebar_overlays(self) -> None:
-        """Draw the clickable left-sidebar buttons over the provided artwork."""
+        """Draw hover and active-state highlights over the SVG sidebar buttons."""
 
         for button_name, bounds in self.sidebar_bounds.items():
             x0, y0, x1, y1 = bounds
             if button_name in {"classic", "duo"}:
                 self.draw_mode_control(button_name, x0, y0, x1, y1)
                 continue
-            outline = ""
-            width = 0
+            # Only draw an outline on hover or active — the SVG provides
+            # the default button shape and fill.
             if self.hovered_button == button_name:
-                outline = "#ffe174"
-                width = self.scale_value(4)
-            if self.active_panel == button_name:
-                outline = "#2a348e"
-                width = self.scale_value(5)
+                self.create_round_rect(
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    radius=self.scale_value(28),
+                    fill="",
+                    outline="#ffe174",
+                    width=self.scale_value(4),
+                )
+            elif self.active_panel == button_name:
+                self.create_round_rect(
+                    x0,
+                    y0,
+                    x1,
+                    y1,
+                    radius=self.scale_value(28),
+                    fill="",
+                    outline="#2a348e",
+                    width=self.scale_value(5),
+                )
             style = SIDEBAR_BUTTON_STYLE[button_name]
-            outline = outline or style["outline"]
-            width = width or self.scale_value(3)
-            self.create_round_rect(
-                x0,
-                y0,
-                x1,
-                y1,
-                radius=self.scale_value(28),
-                fill=style["fill"],
-                outline=outline,
-                width=width,
-            )
             self.canvas.create_text(
                 (x0 + x1) / 2,
                 (y0 + y1) / 2,
@@ -273,47 +281,22 @@ class BlokusGui:
             )
 
     def draw_mode_control(self, mode_name: str, x0: float, y0: float, x1: float, y1: float) -> None:
-        """Draw Classic and Duo round controls with active/disabled treatment."""
+        """Draw hover highlights over the Classic/Duo mode buttons."""
 
         is_classic = mode_name == "classic"
         style = MODE_CONTROL_STYLE[mode_name]
-        if is_classic:
-            fill = style["fill_active"]
-            outline = style["outline_active"]
-            if self.hovered_button == mode_name:
-                outline = "#ffe174"
+        # The SVG token artwork for these buttons has been hidden via
+        # display:none on Generatives_Objekt5/6.  Only draw a hover ring.
+        if self.hovered_button == mode_name:
             self.create_round_rect(
                 x0,
                 y0,
                 x1,
                 y1,
                 radius=self.scale_value(32),
-                fill=fill,
-                outline=outline,
+                fill="",
+                outline="#ffe174",
                 width=self.scale_value(4),
-            )
-        else:
-            fill = style["fill_disabled"]
-            outline = style["outline_disabled"]
-            self.create_round_rect(
-                x0,
-                y0,
-                x1,
-                y1,
-                radius=self.scale_value(32),
-                fill=fill,
-                outline=outline,
-                width=self.scale_value(3),
-            )
-            # A subtle strike-through keeps disabled Duo visually unambiguous.
-            self.canvas.create_line(
-                x0 + self.scale_value(12),
-                y1 - self.scale_value(10),
-                x1 - self.scale_value(12),
-                y0 + self.scale_value(10),
-                fill="#6f6882",
-                width=self.scale_value(4),
-                capstyle=tk.ROUND,
             )
         self.canvas.create_text(
             (x0 + x1) / 2,
@@ -327,8 +310,9 @@ class BlokusGui:
         """Render all placed pieces and the board summary line."""
 
         counts = occupied_square_counts(self.state)
-        for row in range(20):
-            for column in range(20):
+        board_size = self.state.board_size
+        for row in range(board_size):
+            for column in range(board_size):
                 occupant = self.state.board[row][column]
                 if occupant is None:
                     continue
@@ -342,7 +326,7 @@ class BlokusGui:
         self.canvas.create_text(
             self.board_x + self.board_size // 2,
             self.board_y + self.board_size + self.scale_value(28),
-            text=" | ".join(f"{player.title()}: {counts[player]} squares" for player in PLAYER_ORDER),
+            text=" | ".join(f"{player.title()}: {counts[player]} squares" for player in self.state.players),
             fill="#2a348e",
             font=self.font_body,
         )
@@ -358,49 +342,24 @@ class BlokusGui:
             )
 
     def draw_status_panel(self) -> None:
-        """Draw live player badges over the decorative score artwork."""
+        """Draw live score numbers and active-player highlight over SVG artwork."""
 
         scores = compute_scores(self.state)
         score_font = ("Avenir Next", max(18, self.scale_value(24)), "bold")
         for player, (icon_x, icon_y) in self.player_icon_positions.items():
+            # The SVG provides the player card backgrounds and robot
+            # illustrations.  Highlight the active player with gold text;
+            # inactive players use the default dark blue.
             is_active = player == self.state.current_player
-            card_x0 = icon_x - self.scale_value(42)
-            card_y0 = icon_y - self.scale_value(34)
-            card_x1 = icon_x + self.scale_value(92)
-            card_y1 = icon_y + self.scale_value(34)
-            self.create_round_rect(
-                card_x0,
-                card_y0,
-                card_x1,
-                card_y1,
-                radius=self.scale_value(26),
-                fill=STATUS_CARD_STYLE["fill"],
-                outline=STATUS_CARD_STYLE["active_outline"] if is_active else STATUS_CARD_STYLE["outline"],
-                width=self.scale_value(4) if is_active else self.scale_value(3),
-            )
-            if player == self.state.current_player:
-                self.canvas.create_oval(
-                    icon_x - self.scale_value(25),
-                    icon_y - self.scale_value(25),
-                    icon_x + self.scale_value(25),
-                    icon_y + self.scale_value(25),
-                    outline=STATUS_CARD_STYLE["active_outline"],
-                    width=self.scale_value(3),
-                )
-            self.canvas.create_image(
-                icon_x,
-                icon_y,
-                image=self.images[ROBOT_ICON_KEY[player]],
-            )
-            text_x = icon_x + self.scale_value(34)
-            text_y = icon_y
+            text_x = self.scale_value(SCORE_TEXT_X.get(player, icon_x - 34))
+            text_y = self.scale_value(110) if icon_y < self.scale_value(160) else self.scale_value(202)
             self.canvas.create_text(
                 text_x,
                 text_y,
                 text=str(scores[player]),
-                fill=STATUS_CARD_STYLE["score_fill"],
+                fill=STATUS_CARD_STYLE["active_outline"] if is_active else STATUS_CARD_STYLE["score_fill"],
                 font=score_font,
-                anchor="w",
+                anchor="e",
             )
 
     def draw_piece_panel(self) -> None:
@@ -527,7 +486,7 @@ class BlokusGui:
 
         if self.drag_state is None:
             return
-        board_cell = board_cell_from_point(self.pointer_x, self.pointer_y, self.board_metrics)
+        board_cell = board_cell_from_point(self.pointer_x, self.pointer_y, self.board_metrics, self.state.board_size)
         if board_cell is None:
             self.draw_floating_piece_preview()
             return
@@ -653,7 +612,7 @@ class BlokusGui:
 
         if self.drag_state is None:
             return
-        board_cell = board_cell_from_point(event.x, event.y, self.board_metrics)
+        board_cell = board_cell_from_point(event.x, event.y, self.board_metrics, self.state.board_size)
         if board_cell is None:
             self.status_text = "Placement cancelled."
             self.drag_state = None
