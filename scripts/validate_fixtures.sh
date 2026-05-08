@@ -10,7 +10,7 @@ fi
 artifact_dir="${1:-artifacts/ci/fixture-schema}"
 mkdir -p "${artifact_dir}"
 
-python - "${artifact_dir}" <<'PY'
+python3 - "${artifact_dir}" <<'PY'
 import json
 import sys
 from pathlib import Path

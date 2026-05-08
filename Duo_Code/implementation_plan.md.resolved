@@ -1,0 +1,90 @@
+# Blokus Duo Implementation Plan
+
+This document outlines the "Pure Configuration-Driven" implementation plan to add Duo mode support to the Blokus project. This approach extends the existing engine and configuration structures rather than duplicating game logic, satisfying the requirement to use a single universal engine for both Classic and Duo modes.
+
+## User Review Required
+
+> [!WARNING]
+> This plan introduces **Violet** and **Orange** as the two default colors for Duo mode as requested. I will need to create two new SVG files (`player_violet.svg` and `player_orange.svg`) in the `Brokus Graphics` directory by duplicating existing player SVGs and updating their fill colors. Please confirm this approach, or let me know if we should reuse existing colors (e.g. blue and yellow) to avoid creating new assets.
+
+> [!IMPORTANT]
+> The current `GameState` uses `start_corners`. To support Duo's (5,5) and (9,9) starting positions, I will rename this field to `start_squares` throughout `engine.py`, `models.py`, and `config.py`. This will affect serialized game states (e.g., JSON snapshots in tests). Are breaking changes to the serialized JSON schema acceptable?
+
+## Proposed Changes
+
+---
+
+### Configuration Updates (`src/blokus/config.py`)
+
+This file will own all mode-specific constants and dictionary mappings.
+
+- **[MODIFY] `config.py`**
+  - Rename `start_corners` to `start_squares` in the `ModeConfig` dataclass.
+  - Update `CLASSIC_CONFIG` to initialize `start_squares` instead of `start_corners`.
+  - Add a new `DUO_CONFIG` instance with:
+    - `name="duo"`
+    - `board_size=14`
+    - `players=("violet", "orange")`
+    - `start_squares={"violet": (5, 5), "orange": (9, 9)}`
+  - Register `DUO_CONFIG` in the `MODE_CONFIGS` dictionary.
+  - Add mappings for violet (`"V"`) and orange (`"O"`) in `PLAYER_SYMBOLS`. (Note: `"O"` is currently mapped to `"orange"`, so only `"V"` for violet is needed).
+
+---
+
+### State Models (`src/blokus/models.py`)
+
+- **[MODIFY] `models.py`**
+  - In `GameState`, rename the `start_corners` attribute to `start_squares`.
+  - Update the `to_dict` and `from_dict` methods to serialize and deserialize `start_squares`.
+  - Update the `clone` method to copy `start_squares`.
+
+---
+
+### Core Engine (`src/blokus/engine.py`)
+
+The engine will be generalized to enforce rules based on `start_squares` rather than assuming they are always physical board corners.
+
+- **[MODIFY] `engine.py`**
+  - Update `new_game` to instantiate `GameState` with `start_squares`.
+  - Update `_validate_move` to check `state.start_squares` instead of `state.start_corners` for the first move.
+  - Update `_anchor_cells` to yield `state.start_squares[player]` for the first move.
+  - Update the string returned for validation failures from `"Opening move for {move.player} must cover start corner {start_corner}."` to `"Opening move for {move.player} must cover start square {start_square}."`
+
+---
+
+### GUI Adaptation (`src/blokus/gui.py` & `src/blokus/gui_support.py`)
+
+The GUI must adapt dynamically to the player count and board size provided by the engine.
+
+- **[MODIFY] `gui.py`**
+  - Remove the hardcoded `PLAYER_ORDER = ("blue", "yellow", "red", "green")` constant or override it dynamically using `self.state.players`.
+  - Update `draw_board_state`, `draw_status_panel`, `draw_piece_panel`, and settings dialog to iterate over `self.state.players` instead of `PLAYER_ORDER`.
+  - Modify the "Duo" mode button logic in `on_button_press` to start a new Duo game instead of displaying "Duo mode is disabled".
+  - Ensure the board is rendered dynamically based on `self.state.board_size`. The `build_board_metrics` will naturally scale the 14x14 grid into the existing canvas if we pass the new board size.
+  - Update color/score indicators to only render the active players. For Duo, we will center the two score panels or just use the top two slots (e.g., hiding green and red).
+  - Add logic to optionally highlight the starting squares on the first turn of each player.
+
+- **[MODIFY] `gui_assets.py`**
+  - Dynamically add `"robot_violet..."` and `"robot_orange..."` image targets based on the configured players, rather than hardcoding the colors.
+
+---
+
+### Assets (`Brokus Graphics/`)
+
+- **[NEW] `player_violet.svg`** and **[NEW] `player_orange.svg`**
+  - Created by cloning `player_red.svg` and replacing its dominant hex colors with violet and orange hues.
+
+## Verification Plan
+
+### Automated Tests
+- Run `pytest` on existing core engine and validation tests to verify that `start_squares` renaming hasn't broken Classic mode.
+- Execute project bash scripts: `./scripts/test.sh`, `./scripts/cli_smoke.sh`, `./scripts/validate_fixtures.sh` to ensure full compliance.
+- (If necessary, fix any JSON schema definitions and test fixtures that hardcoded `start_corners`).
+
+### Manual Verification
+- Start `python -m blokus` and click the "Duo" button.
+- Verify the board successfully switches to a 14x14 grid.
+- Verify that only two players (Violet and Orange) are visible in the sidebars and top score indicators.
+- Attempt an opening move for Violet at (5,5) and observe that it succeeds.
+- Attempt an opening move elsewhere and observe that it fails.
+- Complete a few turns to verify piece placement logic works accurately.

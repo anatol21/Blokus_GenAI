@@ -7,5 +7,5 @@ else
   export PYTHONPATH=src
 fi
 
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 
