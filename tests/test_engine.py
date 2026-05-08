@@ -1,5 +1,7 @@
 import unittest
 
+import pytest
+
 from blokus.engine import apply_move, new_game, pass_turn, validate_move
 from blokus.models import Move
 
@@ -55,6 +57,17 @@ class EngineRuleTests(unittest.TestCase):
             pass_turn(state)
 
 
+def test_apply_move_illegal_move_preserves_serialized_classic_state() -> None:
+    """Evidence: R-F-05, R-F-10, R-F-25, R-T-04, LIFE-02."""
+
+    state = new_game()
+    serialized_before = state.to_dict()
+
+    with pytest.raises(ValueError, match="must cover start corner"):
+        apply_move(state, Move("blue", "I1", 1, 1))
+
+    assert state.to_dict() == serialized_before
+
+
 if __name__ == "__main__":
     unittest.main()
-
