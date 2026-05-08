@@ -2,6 +2,7 @@
 __pycache__/
 .pytest_cache/
 .cache/
+.ipynb_checkpoints/
 *.pyc
 *.pyo
 *.pyd
@@ -11,3 +12,4 @@ dist/
 *.egg-info/
 my_to_dos.md
 artifacts/
+.env
