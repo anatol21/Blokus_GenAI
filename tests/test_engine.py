@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 
 from blokus.engine import (
     apply_move,
@@ -10,12 +11,12 @@ from blokus.engine import (
     validate_move,
     validate_pass,
 )
-from blokus.models import Move
+from blokus.models import GameState, Move
 from blokus.pieces import PIECE_IDS, absolute_cells
 
 
-def play_standard_opening_cycle():
-    state = new_game()
+def play_standard_opening_cycle() -> GameState:
+    state = new_game(mode="classic")
     moves = [
         Move("blue", "I1", 0, 0),
         Move("yellow", "I1", 19, 0),
@@ -27,10 +28,40 @@ def play_standard_opening_cycle():
     return state
 
 
-def blocked_blue_state():
-    state = new_game()
-    state.remaining_pieces["blue"] = set()
+def _absolute_occupied_cells(move: Move) -> frozenset[tuple[int, int]]:
+    return frozenset(
+        absolute_cells(
+            move.piece,
+            origin=(move.x, move.y),
+            rotation=move.rotation,
+            flipped=move.flipped,
+        )
+    )
+
+
+def _move_uniqueness_key(move: Move) -> tuple[str, frozenset[tuple[int, int]]]:
+    return (move.piece, _absolute_occupied_cells(move))
+
+
+def _serialized_snapshot(state: GameState) -> dict[str, object]:
+    return deepcopy(state.to_dict())
+
+
+def blocked_blue_state() -> GameState:
+    state = new_game(mode="classic")
+    state.remaining_pieces["blue"].clear()
     return state
+
+
+def _unknown_player_classic_state() -> tuple[GameState, str]:
+    state = new_game(mode="classic")
+    return state, "purple"
+
+
+def _finished_classic_state() -> tuple[GameState, str]:
+    state = new_game(mode="classic")
+    state.finished = True
+    return state, state.current_player
 
 
 class EngineRuleTests(unittest.TestCase):
@@ -39,13 +70,13 @@ class EngineRuleTests(unittest.TestCase):
             new_game("duo")
 
     def test_opening_move_must_cover_corner(self) -> None:
-        state = new_game()
+        state = new_game(mode="classic")
         result = validate_move(state, Move("blue", "I1", 1, 1))
         self.assertFalse(result.ok)
         self.assertIn("must cover start corner", result.reason)
 
     def test_turn_order_is_enforced(self) -> None:
-        state = new_game()
+        state = new_game(mode="classic")
         result = validate_move(state, Move("yellow", "I1", 19, 0))
         self.assertFalse(result.ok)
         self.assertIn("It is blue's turn", result.reason)
@@ -57,10 +88,8 @@ class EngineRuleTests(unittest.TestCase):
         for player in state.players:
             self.assertEqual(state.occupied_cells_by_player[player], set())
 
-        # Board remains empty.
         self.assertTrue(all(cell is None for row in state.board for cell in row))
 
-        # Per-player cache entries must be distinct and independent.
         state.occupied_cells_by_player["blue"].add((0, 0))
         for player in state.players:
             if player == "blue":
@@ -71,7 +100,6 @@ class EngineRuleTests(unittest.TestCase):
                 state.occupied_cells_by_player[player],
             )
 
-        # Existing initialization behavior remains intact.
         self.assertEqual(set(state.remaining_pieces.keys()), set(state.players))
         for player in state.players:
             self.assertEqual(state.remaining_pieces[player], set(PIECE_IDS))
@@ -91,6 +119,8 @@ class EngineRuleTests(unittest.TestCase):
         self.assertEqual(cloned.occupied_cells_by_player["blue"], {(0, 0), (1, 1)})
 
     def test_same_color_edge_contact_is_illegal(self) -> None:
+        """Evidence: VAL-03, R-F-04, R-F-13, R-T-02."""
+
         state = play_standard_opening_cycle()
         result = validate_move(state, Move("blue", "I2", 1, 0))
         self.assertFalse(result.ok)
@@ -100,6 +130,176 @@ class EngineRuleTests(unittest.TestCase):
         state = play_standard_opening_cycle()
         result = validate_move(state, Move("blue", "I2", 1, 1))
         self.assertTrue(result.ok)
+
+    def test_validate_move_prioritizes_piece_identity_and_rack_failures_over_spatial_failures(self) -> None:
+        """Evidence: VAL-03, R-F-04, R-F-25."""
+
+        state = play_standard_opening_cycle()
+        result = validate_move(state, Move("blue", "I1", -1, 0))
+        self.assertFalse(result.ok)
+        self.assertIn("is no longer available", result.reason)
+        self.assertNotIn("outside the board", result.reason)
+
+    def test_apply_move_opening_transition_matches_expected_serialized_state(self) -> None:
+        """Evidence: LIFE-01, LIFE-02, R-F-05, R-F-10, R-F-25, R-T-04."""
+
+        state = new_game(mode="classic")
+        next_state = apply_move(state, Move("blue", "I1", 0, 0))
+
+        self.assertEqual(
+            next_state.to_dict(),
+            {
+                "mode": "classic",
+                "board_size": 20,
+                "players": ["blue", "yellow", "red", "green"],
+                "start_corners": {
+                    "blue": [0, 0],
+                    "yellow": [19, 0],
+                    "red": [19, 19],
+                    "green": [0, 19],
+                },
+                "board": [
+                    "B...................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                    "....................",
+                ],
+                "remaining_pieces": {
+                    "blue": [
+                        "F5",
+                        "I5",
+                        "L5",
+                        "N5",
+                        "P5",
+                        "T5",
+                        "U5",
+                        "V5",
+                        "W5",
+                        "X5",
+                        "Y5",
+                        "Z5",
+                        "I4",
+                        "L4",
+                        "O4",
+                        "T4",
+                        "Z4",
+                        "I3",
+                        "V3",
+                        "I2",
+                    ],
+                    "yellow": [
+                        "F5",
+                        "I5",
+                        "L5",
+                        "N5",
+                        "P5",
+                        "T5",
+                        "U5",
+                        "V5",
+                        "W5",
+                        "X5",
+                        "Y5",
+                        "Z5",
+                        "I4",
+                        "L4",
+                        "O4",
+                        "T4",
+                        "Z4",
+                        "I3",
+                        "V3",
+                        "I2",
+                        "I1",
+                    ],
+                    "red": [
+                        "F5",
+                        "I5",
+                        "L5",
+                        "N5",
+                        "P5",
+                        "T5",
+                        "U5",
+                        "V5",
+                        "W5",
+                        "X5",
+                        "Y5",
+                        "Z5",
+                        "I4",
+                        "L4",
+                        "O4",
+                        "T4",
+                        "Z4",
+                        "I3",
+                        "V3",
+                        "I2",
+                        "I1",
+                    ],
+                    "green": [
+                        "F5",
+                        "I5",
+                        "L5",
+                        "N5",
+                        "P5",
+                        "T5",
+                        "U5",
+                        "V5",
+                        "W5",
+                        "X5",
+                        "Y5",
+                        "Z5",
+                        "I4",
+                        "L4",
+                        "O4",
+                        "T4",
+                        "Z4",
+                        "I3",
+                        "V3",
+                        "I2",
+                        "I1",
+                    ],
+                },
+                "history": [
+                    {
+                        "player": "blue",
+                        "piece": "I1",
+                        "x": 0,
+                        "y": 0,
+                        "rotation": 0,
+                        "flipped": False,
+                    }
+                ],
+                "current_player": "yellow",
+                "consecutive_passes": 0,
+                "finished": False,
+                "controller_types": {
+                    "blue": "human",
+                    "yellow": "human",
+                    "red": "human",
+                    "green": "human",
+                },
+                "controller_strategies": {
+                    "blue": "default",
+                    "yellow": "default",
+                    "red": "default",
+                    "green": "default",
+                },
+            },
+        )
 
     def test_apply_move_updates_turn_history_and_piece_pool(self) -> None:
         state = new_game()
@@ -122,8 +322,6 @@ class EngineRuleTests(unittest.TestCase):
             if cell == "blue"
         }
         self.assertEqual(next_state.occupied_cells_by_player["blue"], board_cells)
-
-        # Existing board behavior still matches the applied move.
         self.assertEqual(board_cells, {(0, 0), (1, 0)})
 
     def test_apply_move_does_not_mutate_original_state_cache(self) -> None:
@@ -132,7 +330,6 @@ class EngineRuleTests(unittest.TestCase):
 
         _ = apply_move(state, move)
 
-        # Original state remains unchanged.
         self.assertEqual(state.occupied_cells_by_player["blue"], set())
         self.assertTrue(all(cell is None for row in state.board for cell in row))
 
@@ -149,7 +346,6 @@ class EngineRuleTests(unittest.TestCase):
 
     def test_apply_move_illegal_move_raises_and_does_not_mutate_board_or_cache(self) -> None:
         state = new_game()
-        # Add a sentinel to ensure we detect cache mutation (cache is derived and not serialized).
         state.occupied_cells_by_player["blue"].add((5, 5))
         before_board = [row[:] for row in state.board]
         before_cache = {player: set(cells) for player, cells in state.occupied_cells_by_player.items()}
@@ -159,6 +355,32 @@ class EngineRuleTests(unittest.TestCase):
 
         self.assertEqual(state.board, before_board)
         self.assertEqual(state.occupied_cells_by_player, before_cache)
+
+    def test_apply_move_rejection_paths_preserve_serialized_classic_state(self) -> None:
+        """Evidence: VAL-05, LIFE-02, R-F-05, R-F-10, R-T-04."""
+
+        cases = [
+            (new_game(mode="classic"), Move("blue", "I1", 1, 1), "must cover start corner"),
+            (
+                play_standard_opening_cycle(),
+                Move("blue", "I2", 0, 0),
+                "overlaps an already occupied square",
+            ),
+            (
+                play_standard_opening_cycle(),
+                Move("blue", "I5", 18, 16, rotation=1),
+                "outside the board",
+            ),
+        ]
+
+        for state, move, reason in cases:
+            with self.subTest(move=move, reason=reason):
+                serialized_before = _serialized_snapshot(state)
+
+                with self.assertRaisesRegex(ValueError, reason):
+                    apply_move(state, move)
+
+                self.assertEqual(state.to_dict(), serialized_before)
 
     def test_occupied_cells_cache_accumulates_and_matches_board_per_player(self) -> None:
         state = play_standard_opening_cycle()
@@ -209,6 +431,21 @@ class EngineRuleTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertIn("already finished", result.reason)
 
+    def test_terminal_move_rejection_aligns_with_empty_legal_move_listing(self) -> None:
+        """Evidence: VAL-09, LIST-04, R-F-06, R-F-25."""
+
+        state = new_game(mode="classic")
+        state.finished = True
+        serialized_before = _serialized_snapshot(state)
+
+        self.assertEqual(list_legal_moves(state), [])
+
+        result = validate_move(state, Move("blue", "I1", 0, 0))
+
+        self.assertFalse(result.ok)
+        self.assertIn("already finished", result.reason)
+        self.assertEqual(state.to_dict(), serialized_before)
+
     def test_apply_move_does_not_mutate_state_on_failure(self) -> None:
         state = new_game()
         before = state.to_dict()
@@ -221,6 +458,18 @@ class EngineRuleTests(unittest.TestCase):
         state.consecutive_passes = 2
         next_state = apply_move(state, Move("blue", "I1", 0, 0))
         self.assertEqual(next_state.consecutive_passes, 0)
+
+    def test_apply_move_resets_accumulated_consecutive_passes_in_classic_lifecycle(self) -> None:
+        """Evidence: LIFE-03, R-F-05, R-F-10, R-F-25."""
+
+        state = play_standard_opening_cycle()
+        state.consecutive_passes = 3
+
+        next_state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        self.assertEqual(next_state.consecutive_passes, 0)
+        self.assertEqual(next_state.current_player, "yellow")
+        self.assertFalse(next_state.finished)
 
     def test_pass_from_blocked_player_advances_turn(self) -> None:
         state = blocked_blue_state()
@@ -238,6 +487,26 @@ class EngineRuleTests(unittest.TestCase):
         next_state = pass_turn(state)
         self.assertTrue(next_state.finished)
         self.assertEqual(next_state.current_player, "yellow")
+
+    def test_terminal_pass_finishes_classic_game_once_without_repeat_mutation(self) -> None:
+        """Evidence: LIFE-03, R-F-10, R-F-25."""
+
+        state = new_game(mode="classic")
+        for player in state.players:
+            state.remaining_pieces[player].clear()
+        state.consecutive_passes = len(state.players) - 1
+
+        terminal_state = pass_turn(state)
+
+        self.assertTrue(terminal_state.finished)
+        self.assertEqual(terminal_state.consecutive_passes, len(terminal_state.players))
+        self.assertEqual(terminal_state.current_player, "yellow")
+
+        serialized_terminal = _serialized_snapshot(terminal_state)
+        with self.assertRaisesRegex(ValueError, "already finished"):
+            pass_turn(terminal_state)
+
+        self.assertEqual(terminal_state.to_dict(), serialized_terminal)
 
     def test_list_legal_moves_returns_unique_legal_placements(self) -> None:
         state = new_game()
@@ -259,8 +528,39 @@ class EngineRuleTests(unittest.TestCase):
         self.assertEqual(len(moves), len(placements))
         self.assertTrue(all(validate_move(state, move).ok for move in moves))
 
+    def test_list_legal_moves_on_fresh_classic_state_is_legal_corner_covering_unique_and_deterministic(
+        self,
+    ) -> None:
+        """Evidence: LIST-01, R-F-06, R-F-13, R-T-02, R-T-06."""
+
+        state = new_game(mode="classic")
+        start_corner = state.start_corners[state.current_player]
+
+        first_listing = list_legal_moves(state)
+        second_listing = list_legal_moves(state)
+
+        self.assertTrue(first_listing)
+        self.assertEqual(
+            {_move_uniqueness_key(move) for move in first_listing},
+            {_move_uniqueness_key(move) for move in second_listing},
+        )
+
+        uniqueness_keys = [_move_uniqueness_key(move) for move in first_listing]
+        self.assertEqual(len(uniqueness_keys), len(set(uniqueness_keys)))
+
+        for move in first_listing:
+            self.assertEqual(move.player, state.current_player)
+            self.assertTrue(validate_move(state, move).ok)
+            self.assertIn(start_corner, _absolute_occupied_cells(move))
+
     def test_list_legal_moves_respects_zero_limit(self) -> None:
         state = new_game()
+        self.assertEqual(list_legal_moves(state, limit=0), [])
+
+    def test_list_legal_moves_with_zero_limit_returns_empty_list_on_fresh_classic_state(self) -> None:
+        """Evidence: LIST-03, R-F-02, R-F-06, R-T-06."""
+
+        state = new_game(mode="classic")
         self.assertEqual(list_legal_moves(state, limit=0), [])
 
     def test_list_legal_moves_returns_empty_for_blocked_unknown_and_finished_states(self) -> None:
@@ -269,6 +569,30 @@ class EngineRuleTests(unittest.TestCase):
         self.assertEqual(list_legal_moves(blocked_state, player="orange"), [])
         blocked_state.finished = True
         self.assertEqual(list_legal_moves(blocked_state), [])
+
+    def test_list_legal_moves_returns_empty_without_mutation_in_invalid_or_terminal_classic_contexts(
+        self,
+    ) -> None:
+        """Evidence: LIST-04, R-F-06, R-F-25."""
+
+        cases = [
+            (blocked_blue_state(), "blue", "blocked-player"),
+            (*_unknown_player_classic_state(), "unknown-player"),
+            (*_finished_classic_state(), "finished-game"),
+        ]
+
+        for state, player, case_id in cases:
+            with self.subTest(case_id=case_id):
+                serialized_before = _serialized_snapshot(state)
+
+                moves = list_legal_moves(state, player=player)
+
+                self.assertEqual(moves, [])
+                self.assertEqual(state.to_dict(), serialized_before)
+
+                if case_id == "unknown-player":
+                    self.assertNotIn(player, state.remaining_pieces)
+                    self.assertEqual(state.current_player, serialized_before["current_player"])
 
     def test_initial_scores_reflect_all_remaining_squares(self) -> None:
         scores = compute_scores(new_game())
