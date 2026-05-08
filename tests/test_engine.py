@@ -2,10 +2,14 @@ import unittest
 from copy import deepcopy
 
 from blokus.engine import (
+    _anchor_cells,
     apply_move,
     compute_scores,
+    get_occupied_cells,
+    is_first_move,
     list_legal_moves,
     new_game,
+    occupied_square_counts,
     pass_turn,
     score_player,
     validate_move,
@@ -62,6 +66,25 @@ def _finished_classic_state() -> tuple[GameState, str]:
     state = new_game(mode="classic")
     state.finished = True
     return state, state.current_player
+def board_occupied_cells(state):
+    """Derive occupied cells by scanning the board (not cache-backed helpers)."""
+
+    expected_all = {
+        (x, y)
+        for y, row in enumerate(state.board)
+        for x, cell in enumerate(row)
+        if cell is not None
+    }
+    expected_by_player = {
+        player: {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell == player
+        }
+        for player in state.players
+    }
+    return expected_all, expected_by_player
 
 
 class EngineRuleTests(unittest.TestCase):
@@ -117,6 +140,25 @@ class EngineRuleTests(unittest.TestCase):
         cloned.occupied_cells_by_player["blue"].add((1, 1))
         self.assertEqual(state.occupied_cells_by_player["blue"], {(0, 0)})
         self.assertEqual(cloned.occupied_cells_by_player["blue"], {(0, 0), (1, 1)})
+
+    def test_clone_preserves_cache_contents_without_sharing_sets_after_moves(self) -> None:
+        state = play_standard_opening_cycle()
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        cloned = state.clone()
+        for player in state.players:
+            self.assertEqual(
+                cloned.occupied_cells_by_player[player],
+                state.occupied_cells_by_player[player],
+            )
+            self.assertIsNot(
+                cloned.occupied_cells_by_player[player],
+                state.occupied_cells_by_player[player],
+            )
+
+        # Mutating the clone must not affect the original.
+        cloned.occupied_cells_by_player["blue"].add((2, 2))
+        self.assertNotIn((2, 2), state.occupied_cells_by_player["blue"])
 
     def test_same_color_edge_contact_is_illegal(self) -> None:
         """Evidence: VAL-03, R-F-04, R-F-13, R-T-02."""
@@ -309,6 +351,85 @@ class EngineRuleTests(unittest.TestCase):
         self.assertNotIn("I1", next_state.remaining_pieces["blue"])
         self.assertEqual(next_state.board[0][0], "blue")
 
+    def test_get_occupied_cells_returns_player_cache_after_legal_move(self) -> None:
+        state = new_game()
+        state = apply_move(state, Move("blue", "I2", 0, 0))
+
+        expected_blue = {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell == "blue"
+        }
+        self.assertEqual(state.occupied_cells_by_player["blue"], expected_blue)
+        self.assertEqual(get_occupied_cells(state, "blue"), expected_blue)
+
+    def test_get_occupied_cells_returns_union_across_players(self) -> None:
+        state = play_standard_opening_cycle()
+
+        expected_all = {
+            (x, y)
+            for y, row in enumerate(state.board)
+            for x, cell in enumerate(row)
+            if cell is not None
+        }
+        self.assertEqual(get_occupied_cells(state), expected_all)
+
+    def test_get_occupied_cells_matches_board_scan_per_player_after_multiple_moves(self) -> None:
+        state = play_standard_opening_cycle()
+        # Extend beyond the opening cycle to cover incremental cache updates.
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        _expected_all, expected_by_player = board_occupied_cells(state)
+        for player in state.players:
+            self.assertEqual(get_occupied_cells(state, player), expected_by_player[player])
+
+    def test_get_occupied_cells_returns_defensive_copy(self) -> None:
+        state = new_game()
+        state = apply_move(state, Move("blue", "I2", 0, 0))
+
+        returned = get_occupied_cells(state, "blue")
+        self.assertEqual(returned, state.occupied_cells_by_player["blue"])
+
+        # Mutating the returned set must not mutate the internal cache.
+        returned.add((5, 5))
+        returned.discard(next(iter(state.occupied_cells_by_player["blue"])))
+        self.assertNotIn((5, 5), state.occupied_cells_by_player["blue"])
+        self.assertEqual(
+            state.occupied_cells_by_player["blue"],
+            {
+                (x, y)
+                for y, row in enumerate(state.board)
+                for x, cell in enumerate(row)
+                if cell == "blue"
+            },
+        )
+
+    def test_is_first_move_reflects_player_occupancy(self) -> None:
+        state = new_game()
+        self.assertTrue(is_first_move(state, "blue"))
+
+        state = apply_move(state, Move("blue", "I2", 0, 0))
+        self.assertFalse(is_first_move(state, "blue"))
+        self.assertTrue(is_first_move(state, "yellow"))
+
+    def test_occupied_square_counts_matches_board_after_moves(self) -> None:
+        state = play_standard_opening_cycle()
+        state = apply_move(state, Move("blue", "I2", 1, 1))
+
+        expected_counts = {player: 0 for player in state.players}
+        for row in state.board:
+            for cell in row:
+                if cell is not None:
+                    expected_counts[cell] += 1
+
+        self.assertEqual(occupied_square_counts(state), expected_counts)
+
+    def test_cache_read_functions_preserve_unknown_player_behavior(self) -> None:
+        state = new_game()
+        self.assertEqual(get_occupied_cells(state, "orange"), set())
+        self.assertTrue(is_first_move(state, "orange"))
+
     def test_apply_move_adds_placed_cells_to_occupied_cells_cache(self) -> None:
         state = new_game()
         move = Move("blue", "I2", 0, 0)
@@ -346,7 +467,9 @@ class EngineRuleTests(unittest.TestCase):
 
     def test_apply_move_illegal_move_raises_and_does_not_mutate_board_or_cache(self) -> None:
         state = new_game()
-        state.occupied_cells_by_player["blue"].add((5, 5))
+        # Add a sentinel to ensure we detect cache mutation (cache is derived and not serialized).
+        # Use a non-active player so first-move logic for the mover stays intact.
+        state.occupied_cells_by_player["yellow"].add((5, 5))
         before_board = [row[:] for row in state.board]
         before_cache = {player: set(cells) for player, cells in state.occupied_cells_by_player.items()}
 
