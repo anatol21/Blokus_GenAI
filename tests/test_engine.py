@@ -69,5 +69,39 @@ def test_apply_move_illegal_move_preserves_serialized_classic_state() -> None:
     assert state.to_dict() == serialized_before
 
 
+def test_apply_move_resets_accumulated_consecutive_passes_in_classic_lifecycle() -> None:
+    """Evidence: LIFE-03, R-F-05, R-F-10, R-F-25."""
+
+    state = play_standard_opening_cycle()
+    state.consecutive_passes = 3
+
+    next_state = apply_move(state, Move("blue", "I2", 1, 1))
+
+    assert next_state.consecutive_passes == 0
+    assert next_state.current_player == "yellow"
+    assert next_state.finished is False
+
+
+def test_terminal_pass_finishes_classic_game_once_without_repeat_mutation() -> None:
+    """Evidence: LIFE-03, R-F-10, R-F-25."""
+
+    state = new_game()
+    for player in state.players:
+        state.remaining_pieces[player].clear()
+    state.consecutive_passes = len(state.players) - 1
+
+    terminal_state = pass_turn(state)
+
+    assert terminal_state.finished is True
+    assert terminal_state.consecutive_passes == len(terminal_state.players)
+    assert terminal_state.current_player == "yellow"
+
+    serialized_terminal = terminal_state.to_dict()
+    with pytest.raises(ValueError, match="already finished"):
+        pass_turn(terminal_state)
+
+    assert terminal_state.to_dict() == serialized_terminal
+
+
 if __name__ == "__main__":
     unittest.main()
