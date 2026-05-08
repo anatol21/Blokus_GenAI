@@ -2,7 +2,6 @@ import unittest
 from copy import deepcopy
 
 from blokus.engine import (
-    _anchor_cells,
     apply_move,
     compute_scores,
     get_occupied_cells,
