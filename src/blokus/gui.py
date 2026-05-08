@@ -67,6 +67,12 @@ MODE_CONTROL_STYLE = {
         "label": "Duo",
     },
 }
+STATUS_CARD_STYLE = {
+    "fill": "#c7b7e4",
+    "outline": "#546fc0",
+    "active_outline": "#ecd04c",
+    "score_fill": "#243f85",
+}
 PANEL_GRADIENT_LEFT = "#c79aa6"
 PANEL_GRADIENT_RIGHT = "#a896df"
 
@@ -352,33 +358,49 @@ class BlokusGui:
             )
 
     def draw_status_panel(self) -> None:
-        """Draw scores near the static player robots in the top-right panel."""
+        """Draw live player badges over the decorative score artwork."""
 
         scores = compute_scores(self.state)
         score_font = ("Avenir Next", max(18, self.scale_value(24)), "bold")
         for player, (icon_x, icon_y) in self.player_icon_positions.items():
+            is_active = player == self.state.current_player
+            card_x0 = icon_x - self.scale_value(42)
+            card_y0 = icon_y - self.scale_value(34)
+            card_x1 = icon_x + self.scale_value(92)
+            card_y1 = icon_y + self.scale_value(34)
+            self.create_round_rect(
+                card_x0,
+                card_y0,
+                card_x1,
+                card_y1,
+                radius=self.scale_value(26),
+                fill=STATUS_CARD_STYLE["fill"],
+                outline=STATUS_CARD_STYLE["active_outline"] if is_active else STATUS_CARD_STYLE["outline"],
+                width=self.scale_value(4) if is_active else self.scale_value(3),
+            )
             if player == self.state.current_player:
                 self.canvas.create_oval(
-                    icon_x - self.scale_value(34),
-                    icon_y - self.scale_value(34),
-                    icon_x + self.scale_value(34),
-                    icon_y + self.scale_value(34),
-                    outline="#ecd04c",
-                    width=self.scale_value(5),
+                    icon_x - self.scale_value(25),
+                    icon_y - self.scale_value(25),
+                    icon_x + self.scale_value(25),
+                    icon_y + self.scale_value(25),
+                    outline=STATUS_CARD_STYLE["active_outline"],
+                    width=self.scale_value(3),
                 )
             self.canvas.create_image(
                 icon_x,
                 icon_y,
                 image=self.images[ROBOT_ICON_KEY[player]],
             )
-            text_x = icon_x + self.scale_value(22)
+            text_x = icon_x + self.scale_value(34)
             text_y = icon_y
             self.canvas.create_text(
                 text_x,
                 text_y,
                 text=str(scores[player]),
-                fill="#2a348e",
+                fill=STATUS_CARD_STYLE["score_fill"],
                 font=score_font,
+                anchor="w",
             )
 
     def draw_piece_panel(self) -> None:
