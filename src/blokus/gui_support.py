@@ -153,7 +153,9 @@ def load_sidebar_piece_slots(
     return slots
 
 
-def board_cell_from_point(x: float, y: float, metrics: BoardMetrics) -> Coordinate | None:
+def board_cell_from_point(
+    x: float, y: float, metrics: BoardMetrics, board_size: int = 20,
+) -> Coordinate | None:
     """Convert a canvas point into a board cell, or return `None` if outside."""
 
     local_x = x - metrics.grid_origin_x
@@ -162,7 +164,7 @@ def board_cell_from_point(x: float, y: float, metrics: BoardMetrics) -> Coordina
         return None
     column = int(math.floor(local_x / metrics.cell_size))
     row = int(math.floor(local_y / metrics.cell_size))
-    if 0 <= column < 20 and 0 <= row < 20:
+    if 0 <= column < board_size and 0 <= row < board_size:
         return (column, row)
     return None
 

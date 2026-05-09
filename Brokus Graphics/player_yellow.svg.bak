@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg id="Ebene_1" data-name="Ebene 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80">
-  <g transform="translate(14.76, 0) scale(1.0485)">
+<svg id="Ebene_1" data-name="Ebene 1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48.14 76.3">
   <defs>
     <style>
       .cls-1 {
@@ -75,6 +74,5 @@
         <path class="cls-3" d="M28.65,18.68c1.06-.29,2.15.33,2.44,1.42.26.99-.3,2.1-1.43,2.41-.97.27-2.1-.31-2.4-1.36s.28-2.16,1.39-2.47Z"/>
       </g>
     </g>
-  </g>
   </g>
 </svg>
