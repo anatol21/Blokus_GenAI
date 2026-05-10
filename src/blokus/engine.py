@@ -304,6 +304,80 @@ def pass_turn(state: GameState, player: str | None = None) -> GameState:
     return new_state
 
 
+def validate_loaded_state(loaded: GameState) -> None:
+    """
+    Validate semantic consistency of an imported game state.
+
+    Performs two checks:
+    1. Quick consistency: board occupancy + remaining_pieces alignment
+    2. Full replay: reconstruct state from history and compare to loaded state
+
+    Raises ValueError with actionable message if validation fails.
+    No exception = state is ready for play.
+    """
+
+    # Step 1: Quick consistency check - verify remaining_pieces + occupied cells align
+    for player in loaded.players:
+        # Count pieces placed from history (not cells, since each piece can span multiple cells)
+        pieces_placed = sum(1 for move in loaded.history if move.player == player)
+        remaining_count = len(loaded.remaining_pieces[player])
+        total_count = pieces_placed + remaining_count
+        # Each player should have exactly 21 pieces in all standard modes
+        expected_count = 21
+        if total_count != expected_count:
+            raise ValueError(
+                f"Remaining pieces mismatch for player {player}: "
+                f"placed {pieces_placed} + remaining {remaining_count} = {total_count}, "
+                f"expected {expected_count}."
+            )
+
+    # Step 2: Full replay - reconstruct state from history and compare
+    expected = new_game(
+        mode=loaded.mode,
+        controllers=loaded.controller_types,
+        strategies=loaded.controller_strategies,
+    )
+
+    for move_idx, move in enumerate(loaded.history):
+        # Validate the move is legal in the current expected state
+        validation_result = validate_move(expected, move)
+        if not validation_result.ok:
+            raise ValueError(
+                f"History contains illegal move at index {move_idx}: {validation_result.reason}"
+            )
+        # Apply the move to advance expected state
+        expected = apply_move(expected, move)
+
+    # Step 3: Compare final states
+    # Compare key fields that should match after replay
+    if expected.board != loaded.board:
+        raise ValueError("Board state mismatch after replaying history.")
+
+    if expected.remaining_pieces != loaded.remaining_pieces:
+        raise ValueError("Remaining pieces mismatch after replaying history.")
+
+    if expected.current_player != loaded.current_player:
+        raise ValueError(
+            f"Current player mismatch: expected {expected.current_player}, "
+            f"got {loaded.current_player}."
+        )
+
+    if expected.occupied_cells_by_player != loaded.occupied_cells_by_player:
+        raise ValueError("Occupied cells mismatch after replaying history.")
+
+    if expected.consecutive_passes != loaded.consecutive_passes:
+        raise ValueError(
+            f"Consecutive passes mismatch: expected {expected.consecutive_passes}, "
+            f"got {loaded.consecutive_passes}."
+        )
+
+    if expected.finished != loaded.finished:
+        raise ValueError(
+            f"Finished flag mismatch: expected {expected.finished}, "
+            f"got {loaded.finished}."
+        )
+
+
 def score_player(state: GameState, player: str) -> int:
     """Score a player using official remaining-square scoring bonuses."""
 
