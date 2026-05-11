@@ -1,9 +1,16 @@
-from typing import Any, Callable
+from copy import deepcopy
+from typing import Any, Callable, cast
 import pytest
 from blokus.models import GameState, Move
 from blokus.engine import new_game, apply_move
 
 # === Round-Trip Integrity ===
+
+
+def mutable_payload() -> dict[str, Any]:
+    """Return a mutable loose payload for tests that intentionally corrupt state."""
+    return cast(dict[str, Any], deepcopy(new_game().to_dict()))
+
 
 def test_gamestate_initial_round_trip() -> None:
     """Verify that a fresh game state survives a to_dict/from_dict cycle."""
@@ -72,7 +79,7 @@ def test_gamestate_exhausted_pieces_round_trip() -> None:
 ])
 def test_from_dict_structural_rejection(mutation: Callable[[dict[str, Any]], None]) -> None:
     """Verify that structurally invalid or mismatched payloads are rejected."""
-    payload: dict[str, Any] = new_game().to_dict()
+    payload = mutable_payload()
     mutation(payload)
     with pytest.raises((ValueError, KeyError)):
         GameState.from_dict(payload)
@@ -84,7 +91,7 @@ def test_from_dict_rejects_duplicate_pieces_in_rack() -> None:
     """
     Security: Prevents a player from having two of the same piece through payload injection.
     """
-    payload: dict[str, Any] = new_game().to_dict()
+    payload = mutable_payload()
     payload["remaining_pieces"]["blue"] = ["I1", "I1", "I2"]
     with pytest.raises(ValueError, match="contain duplicates"):
         GameState.from_dict(payload)
@@ -94,7 +101,7 @@ def test_from_dict_rejects_unknown_piece_ids() -> None:
     """
     Security: Prevents injection of non-existent or overpowered custom pieces.
     """
-    payload: dict[str, Any] = new_game().to_dict()
+    payload = mutable_payload()
     payload["remaining_pieces"]["blue"] = ["X_MASTER_PIECE"]
     with pytest.raises(ValueError, match="contain unknown ids"):
         GameState.from_dict(payload)
@@ -104,7 +111,7 @@ def test_from_dict_rejects_invalid_board_symbols() -> None:
     """
     Security: Prevents injection of invalid character symbols into the board strings.
     """
-    payload: dict[str, Any] = new_game().to_dict()
+    payload = mutable_payload()
     # Inject 'X' into the top row
     payload["board"][0] = "X" + "." * 19
     with pytest.raises(ValueError, match="No player configured"):
@@ -115,7 +122,7 @@ def test_from_dict_history_type_safety() -> None:
     """
     Hardening: Ensure that history items are strictly type-validated during deserialization.
     """
-    payload: dict[str, Any] = new_game().to_dict()
+    payload = mutable_payload()
     payload["history"] = [{"player": "blue", "piece": "I1", "x": "NaN", "y": 0}]
     with pytest.raises(ValueError):
         GameState.from_dict(payload)
@@ -128,7 +135,7 @@ def test_from_dict_logic_sync_violation() -> None:
     This test documents current engine limitations in cross-field validation.
     """
     state = new_game()
-    payload: dict[str, Any] = state.to_dict()
+    payload = cast(dict[str, Any], deepcopy(state.to_dict()))
     # Manually add a piece to the board in the payload
     payload["board"][0] = "B" + "." * 19
     # But 'I1' is still in 'remaining_pieces' in the payload
