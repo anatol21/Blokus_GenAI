@@ -3,9 +3,7 @@
 import json
 import tempfile
 import unittest
-from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
 
 from blokus.engine import apply_move, new_game, validate_loaded_state
 from blokus.models import GameState, Move

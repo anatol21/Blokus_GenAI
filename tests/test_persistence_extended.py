@@ -1,8 +1,6 @@
-import json
 import pytest
 from blokus.models import GameState, Move
 from blokus.engine import new_game, apply_move
-from blokus.pieces import PIECE_IDS
 
 # === Round-Trip Integrity ===
 
