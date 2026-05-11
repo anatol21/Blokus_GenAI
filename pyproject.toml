@@ -36,7 +36,8 @@ where = ["src"]
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src/blokus", "scripts/github"]
+files = ["src/blokus", "scripts/github", "tests", "import_json_tests"]
 check_untyped_defs = true
 warn_unused_ignores = true
 no_implicit_optional = true
+ignore_missing_imports = true
