@@ -1,12 +1,13 @@
 """Command-line interface for the Blokus engine."""
 
 from argparse import ArgumentParser, Namespace
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import sys
 
 from blokus.config import get_mode_config
-from blokus.engine import apply_move, list_legal_moves, new_game, pass_turn, validate_move
+from blokus.engine import apply_move, list_legal_moves, new_game, pass_turn, validate_loaded_state, validate_move
 from blokus.evaluate import main as evaluate_main
 from blokus.models import GameState, Move
 from blokus.players import choose_move
@@ -20,7 +21,7 @@ def _load_state(path: str) -> GameState:
         return GameState.from_dict(json.load(handle))
 
 
-def _dump_json(payload: dict[str, object], output_path: str | None) -> None:
+def _dump_json(payload: Mapping[str, object], output_path: str | None) -> None:
     """Write JSON either to a file or to standard output."""
 
     if output_path:
@@ -157,7 +158,7 @@ def _handle_human_turn(state: GameState) -> GameState | None:
     print(
         "\nEnter one of: "
         "'move PIECE X Y ROTATION FLIPPED(0|1)', "
-        "'legal [N]', 'pass', 'show', 'quit'."
+        "'legal [N]', 'pass', 'show', 'export', 'import', 'quit'."
     )
     while True:
         raw = input(f"{state.current_player}> ").strip()
@@ -168,6 +169,119 @@ def _handle_human_turn(state: GameState) -> GameState | None:
         if raw == "show":
             print(render_state(state))
             continue
+        if raw.startswith("export"):
+            # Support both `export` (interactive prompts) and `export <path>` convenience form.
+            parts = raw.split(maxsplit=1)
+            given = parts[1].strip() if len(parts) > 1 else None
+            try:
+                if given:
+                    # Try immediate write; on failure fall through to interactive retry loop.
+                    target = Path(given).expanduser()
+                    if target.suffix.lower() != ".json":
+                        target = target.with_suffix(target.suffix + ".json") if target.suffix else Path(str(target) + ".json")
+                    # Attempt write using the established dump path. Overwriting is allowed.
+                    try:
+                        _dump_json(state.to_dict(), str(target))
+                        print(f"Exported game state to {target}")
+                        continue
+                    except Exception as exc:
+                        print(f"Export failed: {exc}")
+                        # fall through to interactive retry below
+                # Interactive retry loop: ask for filename then path, allow cancel.
+                while True:
+                    filename = input("Enter filename (or 'cancel' to abort): ").strip()
+                    if filename.lower() == "cancel":
+                        break
+                    if not filename:
+                        print("Invalid filename.")
+                        continue
+                    # append .json if missing
+                    if not filename.lower().endswith(".json"):
+                        filename = filename + ".json"
+                    directory = input("Enter directory path (or 'cancel' to abort): ").strip()
+                    if directory.lower() == "cancel":
+                        break
+                    if not directory:
+                        print("Invalid path.")
+                        continue
+                    outdir = Path(directory).expanduser()
+                    if not outdir.exists() or not outdir.is_dir():
+                        print("Directory does not exist or is not a directory.")
+                        continue
+                    target = outdir / filename
+                    try:
+                        _dump_json(state.to_dict(), str(target))
+                        print(f"Exported game state to {target}")
+                        break
+                    except Exception as exc:
+                        print(f"Export failed: {exc}")
+                        # retry the path/filename prompts
+                continue
+            except Exception:
+                # Protect the outer loop from unrelated failures; re-raise unexpected errors.
+                raise
+        if raw.startswith("import"):
+            # Support both `import` (interactive prompts) and `import <path>` convenience form.
+            parts = raw.split(maxsplit=1)
+            given = parts[1].strip() if len(parts) > 1 else None
+            try:
+                if given:
+                    # Try immediate load; on failure fall through to interactive retry loop.
+                    target = Path(given).expanduser()
+                    if target.suffix.lower() != ".json":
+                        target = target.with_suffix(target.suffix + ".json") if target.suffix else Path(str(target) + ".json")
+                    try:
+                        with open(target, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        loaded = GameState.from_dict(data)
+                        validate_loaded_state(loaded)
+                        state = loaded
+                        print(f"Imported game state from {target}")
+                        continue
+                    except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
+                        print(f"Import failed: {exc}")
+                        # fall through to interactive retry below
+                # Interactive retry loop: ask for filename then path, allow cancel.
+                while True:
+                    filename = input("Enter filename (or 'cancel' to abort): ").strip()
+                    if filename.lower() == "cancel":
+                        break
+                    if not filename:
+                        print("Invalid filename.")
+                        continue
+                    # append .json if missing
+                    if not filename.lower().endswith(".json"):
+                        filename = filename + ".json"
+                    directory = input("Enter directory path (or 'cancel' to abort): ").strip()
+                    if directory.lower() == "cancel":
+                        break
+                    if not directory:
+                        print("Invalid path.")
+                        continue
+                    indir = Path(directory).expanduser()
+                    if not indir.exists() or not indir.is_dir():
+                        print("Directory does not exist or is not a directory.")
+                        continue
+                    target = indir / filename
+                    try:
+                        with open(target, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        loaded = GameState.from_dict(data)
+                        validate_loaded_state(loaded)
+                        state = loaded
+                        print(f"Imported game state from {target}")
+                        break
+                    except FileNotFoundError:
+                        print(f"File not found: {target}")
+                    except json.JSONDecodeError as e:
+                        print(f"Invalid JSON: {e}")
+                    except ValueError as e:
+                        print(f"Import failed: {e}")
+                    # retry the path/filename prompts
+                continue
+            except Exception:
+                # Protect the outer loop from unrelated failures; re-raise unexpected errors.
+                raise
         if raw.startswith("legal"):
             # Keep legal-move listing lightweight so a human can browse candidates quickly.
             parts = raw.split()

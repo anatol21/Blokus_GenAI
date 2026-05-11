@@ -1,0 +1,216 @@
+{
+  "mode": "classic",
+  "board_size": 20,
+  "players": [
+    "blue",
+    "yellow",
+    "red",
+    "green"
+  ],
+  "start_corners": {
+    "blue": [
+      0,
+      0
+    ],
+    "yellow": [
+      19,
+      0
+    ],
+    "red": [
+      19,
+      19
+    ],
+    "green": [
+      0,
+      19
+    ]
+  },
+  "board": [
+    "BBBB.......Y...YYYYY",
+    "B...BB.....YYYY.....",
+    ".....BB.............",
+    ".....B..............",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "GG...............R..",
+    ".G...............R..",
+    ".G...............R..",
+    ".G...............RR.",
+    "G..................R",
+    "G..................R",
+    "G..................R",
+    "G..................R",
+    "G..................R"
+  ],
+  "remaining_pieces": {
+    "blue": [
+      "I5",
+      "N5",
+      "P5",
+      "T5",
+      "U5",
+      "V5",
+      "W5",
+      "X5",
+      "Y5",
+      "Z5",
+      "I4",
+      "L4",
+      "O4",
+      "T4",
+      "Z4",
+      "I3",
+      "V3",
+      "I2",
+      "I1"
+    ],
+    "yellow": [
+      "N5",
+      "P5",
+      "T5",
+      "U5",
+      "V5",
+      "W5",
+      "X5",
+      "Y5",
+      "Z5",
+      "I4",
+      "L4",
+      "O4",
+      "T4",
+      "Z4",
+      "I3",
+      "V3",
+      "I2",
+      "I1"
+    ],
+    "red": [
+      "F5",
+      "N5",
+      "P5",
+      "T5",
+      "U5",
+      "V5",
+      "W5",
+      "X5",
+      "Y5",
+      "Z5",
+      "I4",
+      "L4",
+      "O4",
+      "T4",
+      "Z4",
+      "I3",
+      "V3",
+      "I2",
+      "I1"
+    ],
+    "green": [
+      "F5",
+      "N5",
+      "P5",
+      "T5",
+      "U5",
+      "V5",
+      "W5",
+      "X5",
+      "Y5",
+      "Z5",
+      "I4",
+      "L4",
+      "O4",
+      "T4",
+      "Z4",
+      "I3",
+      "V3",
+      "I2",
+      "I1"
+    ]
+  },
+  "history": [
+    {
+      "player": "blue",
+      "piece": "L5",
+      "x": 0,
+      "y": 0,
+      "rotation": 3,
+      "flipped": false
+    },
+    {
+      "player": "yellow",
+      "piece": "I5",
+      "x": 15,
+      "y": 0,
+      "rotation": 0,
+      "flipped": false
+    },
+    {
+      "player": "red",
+      "piece": "I5",
+      "x": 19,
+      "y": 15,
+      "rotation": 1,
+      "flipped": false
+    },
+    {
+      "player": "green",
+      "piece": "I5",
+      "x": 0,
+      "y": 15,
+      "rotation": 1,
+      "flipped": false
+    },
+    {
+      "player": "blue",
+      "piece": "F5",
+      "x": 4,
+      "y": 1,
+      "rotation": 0,
+      "flipped": true
+    },
+    {
+      "player": "yellow",
+      "piece": "L5",
+      "x": 11,
+      "y": 0,
+      "rotation": 3,
+      "flipped": true
+    },
+    {
+      "player": "red",
+      "piece": "L5",
+      "x": 17,
+      "y": 11,
+      "rotation": 0,
+      "flipped": false
+    },
+    {
+      "player": "green",
+      "piece": "L5",
+      "x": 0,
+      "y": 11,
+      "rotation": 2,
+      "flipped": false
+    }
+  ],
+  "current_player": "blue",
+  "consecutive_passes": 0,
+  "finished": false,
+  "controller_types": {
+    "blue": "human",
+    "yellow": "computer",
+    "red": "computer",
+    "green": "computer"
+  },
+  "controller_strategies": {
+    "blue": "default",
+    "yellow": "default",
+    "red": "default",
+    "green": "default"
+  }
+}

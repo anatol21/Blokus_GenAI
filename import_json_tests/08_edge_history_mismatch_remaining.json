@@ -1,0 +1,43 @@
+{
+  "_comment": "Invalid: history lists multiple placements but remaining_pieces not adjusted (semantic mismatch)",
+  "mode": "classic",
+  "board_size": 20,
+  "players": ["blue","yellow","red","green"],
+  "start_corners": {"blue":[0,0],"yellow":[19,0],"red":[19,19],"green":[0,19]},
+  "board": [
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "...................."
+  ],
+  "remaining_pieces": {"blue":["I1","I2","I3","I4","I5","L5","N5","P5","T5","U5","V5","W5","X5","Y5","Z5","L4","O4","T4","Z4","I3","V3"],
+                       "yellow":["I1","I2","I3","I4","I5","L5","N5","P5","T5","U5","V5","W5","X5","Y5","Z5","L4","O4","T4","Z4","I3","V3"],
+                       "red":["I1","I2","I3","I4","I5","L5","N5","P5","T5","U5","V5","W5","X5","Y5","Z5","L4","O4","T4","Z4","I3","V3"],
+                       "green":["I1","I2","I3","I4","I5","L5","N5","P5","T5","U5","V5","W5","X5","Y5","Z5","L4","O4","T4","Z4","I3","V3"]},
+  "history": [
+    {"player":"blue","piece":"I1","x":0,"y":0,"rotation":0,"flipped":false},
+    {"player":"blue","piece":"L5","x":2,"y":0,"rotation":0,"flipped":false},
+    {"player":"blue","piece":"F5","x":4,"y":0,"rotation":0,"flipped":false}
+  ],
+  "current_player":"yellow",
+  "consecutive_passes":0,
+  "finished":false,
+  "controller_types":{"blue":"human","yellow":"computer","red":"computer","green":"computer"},
+  "controller_strategies":{"blue":"default","yellow":"default","red":"default","green":"default"}
+}

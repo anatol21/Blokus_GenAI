@@ -1,0 +1,41 @@
+{
+  "_comment": "Invalid: missing pieces in remaining_pieces (total < 21 when combined with history)",
+  "mode": "classic",
+  "board_size": 20,
+  "players": ["blue","yellow","red","green"],
+  "start_corners": {"blue":[0,0],"yellow":[19,0],"red":[19,19],"green":[0,19]},
+  "board": [
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "....................",
+    "...................."
+  ],
+  "remaining_pieces": {
+    "blue": ["I2","I3"],
+    "yellow": ["I1","I2"],
+    "red": ["I1"],
+    "green": []
+  },
+  "history": [],
+  "current_player":"blue",
+  "consecutive_passes":0,
+  "finished":false,
+  "controller_types":{"blue":"human","yellow":"computer","red":"computer","green":"computer"},
+  "controller_strategies":{"blue":"default","yellow":"default","red":"default","green":"default"}
+}

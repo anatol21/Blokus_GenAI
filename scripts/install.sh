@@ -14,3 +14,5 @@ pth_path = site_packages / "blokus_focus_pokus_local.pth"
 pth_path.write_text(f"{src}\n", encoding="utf-8")
 print(f"Wrote {pth_path}")
 PY
+
+python -m pip install -e '.[test]'
