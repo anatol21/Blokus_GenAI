@@ -344,7 +344,7 @@ class BlokusGui:
     def draw_status_panel(self) -> None:
         """Draw live score numbers and active-player highlight over SVG artwork."""
 
-        scores = compute_scores(self.state)
+        scores = compute_scores(self.state) if self.state.finished else occupied_square_counts(self.state)
         score_font = ("Avenir Next", max(18, self.scale_value(24)), "bold")
         for player, (icon_x, icon_y) in self.player_icon_positions.items():
             # The SVG provides the player card backgrounds and robot
@@ -853,7 +853,7 @@ class BlokusGui:
             "- The first move for each player must cover that player's corner.\n"
             "- Later moves must touch your own color only at corners.\n"
             "- Pieces of the same color may not share an edge.\n"
-            "- Scores use official remaining-square scoring.\n\n"
+            "- During play, scores show occupied squares. Final scores use official remaining-square scoring.\n\n"
             "GUI controls:\n"
             "- Drag a piece from the right panel onto the board.\n"
             "- Press R while dragging to rotate.\n"
