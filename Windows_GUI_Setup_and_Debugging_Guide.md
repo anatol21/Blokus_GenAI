@@ -1,4 +1,4 @@
-# WINDOWS_SETUP_AND_ERRORS.md
+# Windows_GUI_Setup_and_Debugging_Guide.md
 
 ## 1. Overview
 
@@ -255,6 +255,7 @@ python -m blokus gui
 
 ---
 
+
 ## 7. Final Recommendations
 
 ### Best Practices for Windows Users
@@ -273,3 +274,88 @@ rm -r .venv
 py -3.14 -m venv .venv
 .\.venv\Scripts\activate
 pip install -e .
+
+
+## 8. How the Guidelines Helped
+
+**Coding** Guideline 4 — Atomic Task Decomposition
+This guideline was conceptually important during debugging.
+The original issue:
+“Why doesn’t the GUI work?”
+was too broad.
+
+The real debugging process involved multiple independent failure points:
+
+1.	Verify Python version
+2.	Verify PATH
+3.	Install MSYS2
+4.	Install librsvg
+5.	Add MSYS2 to PATH
+6.	Create venv
+7.	Activate venv
+8.	Install project
+9.	Run GUI
+
+Breaking the problem into atomic checks prevented confusion and reduced logical drift.
+Instead of asking one large ambiguous question, the debugging became:
+•	“Is Python configured correctly?”
+•	“Does rsvg-convert exist?”
+•	“Is the venv active?”
+•	“Can Python import blokus?”
+
+This matches the guideline’s principle of decomposing complex problems into smaller testable units.
+_
+_______________________________________
+
+**Debugging** Guideline 1 — Explain Then Fix
+
+This guideline was indirectly useful.
+At first, the assumption could have been:
+
+“The GUI implementation is broken.”
+
+Instead, the debugging process focused on explaining:
+
+*	what each dependency does,
+*	how the environment behaves,
+*	why each command fails,
+*	and how Windows differs from Linux.
+
+Only after understanding the environment was the correct solution identified.
+This avoided unnecessary code rewrites.
+
+________________________________________
+
+**Debugging** Guideline 2 — Scientific Debugging (AutoSD)
+The debugging process closely resembled the scientific debugging loop:
+
+| Step        | Example                                      |
+| ----------- | -------------------------------------------- |
+| Hypothesis  | `rsvg-convert` is missing                    |
+| Prediction  | Running `rsvg-convert --version` should fail |
+| Experiment  | Execute the command                          |
+| Observation | Command not found                            |
+| Conclusion  | librsvg is missing                           |
+
+
+The same process repeated for:
+*	PATH configuration
+*	Virtual environments
+*	Interpreter selection
+*	Module installation
+This iterative reasoning process made the debugging more systematic and reliable.
+________________________________________
+
+Requirements Guideline 1 — Human-in-the-Loop Oversight
+
+This guideline became very important during troubleshooting.
+
+Initially, some LLM suggestions proposed modifying large parts of the codebase.
+However, careful human evaluation showed:
+
+*	the issue was environment-related,
+*	the GUI logic itself was mostly correct,
+*	and rewriting code would not solve the root cause.
+
+Human oversight prevented unnecessary changes, reduced token usage, and focused debugging on the actual problem.
+This demonstrated why developers should critically evaluate LLM suggestions instead of blindly accepting them.
