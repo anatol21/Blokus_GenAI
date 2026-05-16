@@ -140,6 +140,54 @@ class CliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertIn("Controller types must be", completed.stdout)
 
+    def test_new_duo_game_creates_valid_state(self) -> None:
+        """blokus new --mode duo creates a valid 14x14 2-player game."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "duo_state.json"
+            completed = self.run_cli("new", "--mode", "duo", "--output", str(output_path))
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            with output_path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            self.assertEqual(payload["mode"], "duo")
+            self.assertEqual(payload["board_size"], 14)
+            self.assertEqual(payload["players"], ["blue", "yellow"])
+            self.assertEqual(payload["current_player"], "blue")
+            self.assertEqual(len(payload["board"]), 14)
+            self.assertEqual(len(payload["board"][0]), 14)
+
+    def test_duo_opening_move_must_cover_corner(self) -> None:
+        """Duo mode enforces start corner rule."""
+        fixture_path = REPO_ROOT / "fixtures" / "states" / "duo_initial_state.json"
+        if not fixture_path.exists():
+            self.skipTest(f"Fixture not found: {fixture_path}")
+        
+        completed = self.run_cli(
+            "validate",
+            "--state", str(fixture_path),
+            "--piece", "I1",
+            "--x", "5",
+            "--y", "5",
+        )
+        self.assertEqual(completed.returncode, 1)
+        self.assertIn("must cover start corner", completed.stdout)
+
+    def test_duo_legal_moves_at_start(self) -> None:
+        """Duo opening generates legal moves on blue's start corner."""
+        fixture_path = REPO_ROOT / "fixtures" / "states" / "duo_initial_state.json"
+        if not fixture_path.exists():
+            self.skipTest(f"Fixture not found: {fixture_path}")
+        
+        completed = self.run_cli(
+            "legal-moves",
+            "--state", str(fixture_path),
+            "--player", "blue",
+            "--limit", "5",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        lines = completed.stdout.strip().split("\n")
+        self.assertGreater(len(lines), 0)
+        self.assertTrue(any("blue" in line for line in lines))
+
 
 if __name__ == "__main__":
     unittest.main()

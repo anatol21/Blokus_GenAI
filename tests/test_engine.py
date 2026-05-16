@@ -1,4 +1,9 @@
 import unittest
+import pytest
+import tempfile
+import os
+import json
+from pathlib import Path
 
 from blokus.engine import (
     _anchor_cells,
@@ -59,15 +64,37 @@ def board_occupied_cells(state):
 
 
 class EngineRuleTests(unittest.TestCase):
-    def test_unsupported_duo_mode_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Unsupported mode 'duo'"):
-            new_game("duo")
+    @pytest.mark.parametrize("mode,expected_board_size,expected_players", [
+        ("classic", 20, ("blue", "yellow", "red", "green")),
+        ("duo", 14, ("blue", "yellow")),
+    ])
+    def test_new_game_creates_correct_board_size_and_players(self, mode, expected_board_size, expected_players):
+        """Verify board size and player count match mode configuration."""
+        state = new_game(mode=mode)
+        self.assertEqual(len(state.board), expected_board_size)
+        self.assertEqual(len(state.board[0]), expected_board_size)
+        self.assertEqual(state.players, expected_players)
 
-    def test_opening_move_must_cover_corner(self) -> None:
-        state = new_game()
-        result = validate_move(state, Move("blue", "I1", 1, 1))
+    @pytest.mark.parametrize("mode", ["classic", "duo"])
+    def test_opening_move_must_cover_corner(self, mode):
+        """All modes enforce opening move on start corner."""
+        state = new_game(mode=mode)
+        # Try placement at (1, 1) which is not a start corner
+        result = validate_move(state, Move(state.players[0], "I1", 1, 1))
         self.assertFalse(result.ok)
         self.assertIn("must cover start corner", result.reason)
+
+    @pytest.mark.parametrize("mode", ["classic", "duo"])
+    def test_legal_first_moves_cover_start_corner(self, mode):
+        """First moves must include the start corner."""
+        state = new_game(mode=mode)
+        moves = list_legal_moves(state, player=state.players[0], limit=100)
+        # All legal first moves should include start corner
+        start_x, start_y = state.start_corners[state.players[0]]
+        for move in moves:
+            from blokus.pieces import absolute_cells
+            cells = absolute_cells(move)
+            self.assertTrue(any((x, y) == (start_x, start_y) for x, y in cells))
 
     def test_turn_order_is_enforced(self) -> None:
         state = new_game()

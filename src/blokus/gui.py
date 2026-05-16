@@ -5,6 +5,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
+from blokus.config import get_mode_config
 from blokus.engine import apply_move, compute_scores, list_legal_moves, new_game, occupied_square_counts, pass_turn, validate_move
 from blokus.gui_assets import prepare_gui_assets
 from blokus.gui_support import (
@@ -100,13 +101,19 @@ class PieceRenderLayout:
 
 
 class BlokusGui:
-    """Classic-only Tkinter GUI layered on top of the engine."""
+    """Tkinter GUI for Blokus (Classic or Duo mode)."""
 
-    def __init__(self, root: tk.Tk | None = None) -> None:
+    def __init__(self, root: tk.Tk | None = None, mode: str = "classic") -> None:
         """Create the window, load assets, and prepare the initial game state."""
 
         self.root = root or tk.Tk()
-        self.root.title("Blokus Classic GUI")
+        self.mode = mode  # ← ADD THIS
+        config = get_mode_config(mode)  # ← ADD THIS
+        
+        # Update title to reflect mode
+        mode_title = "Classic" if mode == "classic" else "Duo"
+        self.root.title(f"Blokus {mode_title} GUI")
+        
         self.scale = self.compute_scale()
         self.window_width = self.scale_value(BASE_WINDOW_WIDTH)
         self.window_height = self.scale_value(BASE_WINDOW_HEIGHT)
@@ -131,7 +138,8 @@ class BlokusGui:
         self.root.resizable(False, False)
 
         # The GUI remains a thin presentation layer over the engine state.
-        self.state = new_game(mode="classic", controllers={player: "human" for player in PLAYER_ORDER})
+        # Initialize game with selected mode and only mode-specific players.
+        self.state = new_game(mode=mode, controllers={player: "human" for player in config.players})
         self.board_metrics = build_board_metrics(self.board_x, self.board_y, self.board_size)
         self.board_robot_size = max(16, int(round(self.board_metrics.cell_size * 0.72)))
         self.assets = prepare_gui_assets(
@@ -190,6 +198,29 @@ class BlokusGui:
 
         self.redraw()
 
+    def switch_mode(self, new_mode: str) -> None:
+        """Switch to a different game mode and reinitialize the game."""
+
+        if new_mode == self.mode:
+            return
+        
+        self.mode = new_mode
+        config = get_mode_config(new_mode)
+        
+        # Reinitialize the game state with new mode
+        self.state = new_game(mode=new_mode, controllers={player: "human" for player in config.players})
+        
+        # Reset UI state
+        self.hovered_piece = None
+        self.drag_state = None
+        self.active_panel = None
+        self.status_text = "Drag a piece onto the board. Press R to rotate and F to flip while dragging."
+        
+        # Update title
+        mode_title = "Classic" if new_mode == "classic" else "Duo"
+        self.root.title(f"Blokus {mode_title} GUI")
+        
+        self.redraw()
     def compute_scale(self) -> float:
         """Choose a uniform scale that fits the design inside the current screen."""
 
@@ -218,12 +249,16 @@ class BlokusGui:
             self.window_height // 2,
             image=self.images["sidebars"],
         )
+        
+        # Use mode-appropriate board image
+        board_image_key = "board_classic" if self.mode == "classic" else "board_duo"
         self.canvas.create_image(
-            self.board_x,
-            self.board_y,
-            image=self.images["board_classic"],
+            self.board_x if self.mode == "classic" else self.board_x + self.scale_value(25),
+            self.board_y if self.mode == "classic" else self.board_y + self.scale_value(25),
+            image=self.images[board_image_key],
             anchor="nw",
         )
+        
         self.draw_sidebar_overlays()
         self.draw_board_state()
         self.draw_status_panel()
@@ -284,7 +319,9 @@ class BlokusGui:
         """Draw hover highlights over the Classic/Duo mode buttons."""
 
         is_classic = mode_name == "classic"
+        is_active = mode_name == self.mode  # ← ADD THIS
         style = MODE_CONTROL_STYLE[mode_name]
+        
         # The SVG token artwork for these buttons has been hidden via
         # display:none on Generatives_Objekt5/6.  Only draw a hover ring.
         if self.hovered_button == mode_name:
@@ -298,6 +335,18 @@ class BlokusGui:
                 outline="#ffe174",
                 width=self.scale_value(4),
             )
+        elif is_active:  # ← ADD THIS: highlight active mode
+            self.create_round_rect(
+                x0,
+                y0,
+                x1,
+                y1,
+                radius=self.scale_value(32),
+                fill="",
+                outline="#2a348e",
+                width=self.scale_value(5),
+            )
+        
         self.canvas.create_text(
             (x0 + x1) / 2,
             (y0 + y1) / 2,
@@ -346,10 +395,13 @@ class BlokusGui:
 
         scores = compute_scores(self.state) if self.state.finished else occupied_square_counts(self.state)
         score_font = ("Avenir Next", max(18, self.scale_value(24)), "bold")
-        for player, (icon_x, icon_y) in self.player_icon_positions.items():
-            # The SVG provides the player card backgrounds and robot
-            # illustrations.  Highlight the active player with gold text;
-            # inactive players use the default dark blue.
+        
+        # Only draw indicators for players in the current mode
+        for player in self.state.players:
+            if player not in self.player_icon_positions:
+                continue
+            
+            icon_x, icon_y = self.player_icon_positions[player]
             is_active = player == self.state.current_player
             text_x = self.scale_value(SCORE_TEXT_X.get(player, icon_x - 34))
             text_y = self.scale_value(110) if icon_y < self.scale_value(160) else self.scale_value(202)
@@ -573,8 +625,16 @@ class BlokusGui:
         self.redraw()
 
     def on_button_press(self, event: tk.Event) -> None:
-        """Start dragging a piece or activate a sidebar control."""
+        """Handle mouse click on buttons and pieces."""
 
+        # Check if clicking a mode button
+        for mode_name in ["classic", "duo"]:
+            x0, y0, x1, y1 = self.sidebar_bounds.get(mode_name, (0, 0, 0, 0))
+            if x0 <= event.x <= x1 and y0 <= event.y <= y1:
+                if mode_name != self.mode:
+                    self.switch_mode(mode_name)
+                return
+    
         self.root.focus_set()
         piece_id = self.available_piece_at(event.x, event.y)
         if piece_id is not None:

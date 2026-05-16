@@ -154,6 +154,12 @@ def run_all_scenarios(directory: Path = SCENARIO_DIR) -> list[ScenarioResult]:
 def main() -> int:
     """CLI entry point for the evaluation harness."""
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        default="classic",
+        help="Game mode: 'classic' (4-player, 20x20) or 'duo' (2-player, 14x14).",
+    )
     results = run_all_scenarios()
     passed = sum(1 for result in results if result.passed)
     for result in results:
