@@ -150,7 +150,7 @@ class CliTests(unittest.TestCase):
                 payload = json.load(handle)
             self.assertEqual(payload["mode"], "duo")
             self.assertEqual(payload["board_size"], 14)
-            self.assertEqual(payload["players"], ["blue", "yellow"])
+            self.assertEqual(payload["players"], ["blue", "red"])
             self.assertEqual(payload["current_player"], "blue")
             self.assertEqual(len(payload["board"]), 14)
             self.assertEqual(len(payload["board"][0]), 14)

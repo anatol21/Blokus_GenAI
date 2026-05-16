@@ -62,7 +62,7 @@ def board_occupied_cells(state):
 class EngineRuleTests(unittest.TestCase):
     @pytest.mark.parametrize("mode,expected_board_size,expected_players", [
         ("classic", 20, ("blue", "yellow", "red", "green")),
-        ("duo", 14, ("blue", "yellow")),
+        ("duo", 14, ("blue", "red")),
     ])
     
 
@@ -70,7 +70,7 @@ class EngineRuleTests(unittest.TestCase):
         """Verify board size and player count match mode configuration."""
         test_cases = [
             ("classic", 20, ("blue", "yellow", "red", "green")),
-            ("duo", 14, ("blue", "yellow")),
+            ("duo", 14, ("blue", "red")),
         ]
         for mode, expected_board_size, expected_players in test_cases:
          with self.subTest(mode=mode):
