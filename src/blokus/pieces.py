@@ -131,13 +131,37 @@ PIECE_IDS = tuple(sorted(PIECES, key=piece_sort_key))
 
 
 def absolute_cells(
-    piece_id: str,
-    origin: Coordinate,
+    piece_or_move,
+    origin: Coordinate | None = None,
     rotation: int = 0,
     flipped: bool = False,
 ) -> tuple[Coordinate, ...]:
-    """Translate a transformed piece from local coordinates onto the board."""
+    """Translate a transformed piece from local coordinates onto the board.
 
-    transformed = apply_transform(PIECES[piece_id].cells, rotation=rotation, flipped=flipped)
-    origin_x, origin_y = origin
-    return tuple(sorted((origin_x + dx, origin_y + dy) for dx, dy in transformed))
+    Supports both:
+    - absolute_cells(move)
+    - absolute_cells(piece_id, origin, rotation, flipped)
+    """
+
+    # If the first argument is a Move object, extract fields
+    if hasattr(piece_or_move, "piece"):
+        move = piece_or_move
+        piece_id = move.piece
+        origin = (move.x, move.y)
+        rotation = move.rotation
+        flipped = move.flipped
+    else:
+        # Old-style call
+        piece_id = piece_or_move
+        if origin is None:
+            raise ValueError("origin must be provided when not passing a Move")
+
+    transformed = apply_transform(
+        PIECES[piece_id].cells,
+        rotation=rotation,
+        flipped=flipped,
+    )
+
+    ox, oy = origin
+    return tuple(sorted((ox + dx, oy + dy) for dx, dy in transformed))
+    

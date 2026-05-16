@@ -66,6 +66,10 @@ def _move_from_args(state: GameState, args: Namespace) -> Move:
 def cmd_new(args: Namespace) -> int:
     """Create a fresh game state and emit it as JSON."""
 
+    if args.mode not in ["classic"]:
+        print(f"Unsupported mode: {args.mode}")
+        return 1
+    
     controllers = _parse_controllers(args.mode, args.players)
     state = new_game(mode=args.mode, controllers=controllers)
     _dump_json(state.to_dict(), args.output)
