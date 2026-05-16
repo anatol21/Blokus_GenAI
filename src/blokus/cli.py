@@ -107,15 +107,7 @@ def cmd_apply(args: Namespace) -> int:
     return 0
 
 
-    # Apply the move
-    new_state = apply_move(state, move)
-
-    # Advance turn normally (NOT pass_turn)
-    new_state = advance_turn(new_state)
-
-    _dump_json(new_state.to_dict(), args.output)
-    return 0
-
+ 
 
 def cmd_pass_turn(args: Namespace) -> int:
     """Apply a legal pass for the current player."""
