@@ -12,7 +12,9 @@ from blokus.evaluate import main as evaluate_main
 from blokus.models import GameState, Move
 from blokus.players import choose_move
 from blokus.render import render_state
-from blokus.engine import apply_move, validate_move, pass_turn, advance_turn
+from blokus.engine import advance_turn
+
+
 
 def _load_state(path: str) -> GameState:
     """Load a serialized game state from JSON."""
