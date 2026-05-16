@@ -30,10 +30,10 @@ CLASSIC_CONFIG = ModeConfig(
 DUO_CONFIG = ModeConfig(
     name="duo",
     board_size=14,
-    players=("blue", "yellow"),  # 2 players only
+    players=("blue", "red"),  # 2 players only
     start_corners={
-        "blue": (0, 0),
-        "yellow": (13, 13),
+        "blue": (4, 4),
+        "red": (9, 9),
     },
 )
 
