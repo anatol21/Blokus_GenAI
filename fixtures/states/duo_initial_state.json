@@ -85,10 +85,10 @@
   "finished": false,
   "controller_types": {
     "blue": "human",
-    "yellow": "human"
+    "red": "human"
   },
   "controller_strategies": {
     "blue": "default",
-    "yellow": "default"
+    "red": "default"
   }
 }

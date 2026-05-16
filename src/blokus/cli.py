@@ -98,11 +98,14 @@ def cmd_validate(args: Namespace) -> int:
 def cmd_apply(args: Namespace) -> int:
     state = _load_state(args.state)
     move = _move_from_args(state, args)
-
     result = validate_move(state, move)
     if not result.ok:
         print(result.reason)
         return 1
+    new_state = apply_move(state, move)
+    _dump_json(new_state.to_dict(), args.output)
+    return 0
+
 
     # Apply the move
     new_state = apply_move(state, move)
