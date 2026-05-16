@@ -78,26 +78,6 @@ class EngineRuleTests(unittest.TestCase):
             self.assertEqual(len(state.board), expected_board_size)
             self.assertEqual(len(state.board[0]), expected_board_size)
             self.assertEqual(state.players, expected_players)
-    
-    def test_opening_move_must_cover_corner(self):
-        """All modes enforce opening move on start corner."""
-        for mode in ["classic", "duo"]:
-            with self.subTest(mode=mode):
-                state = new_game(mode=mode)
-                result = validate_move(state, Move(state.players[0], "I1", 1, 1))
-                self.assertFalse(result.ok)
-                self.assertIn("must cover start corner", result.reason)
-
-    def test_legal_first_moves_cover_start_corner(self):
-        """First moves must include the start corner."""
-        for mode in ["classic", "duo"]:
-            with self.subTest(mode=mode):
-                state = new_game(mode=mode)
-                moves = list_legal_moves(state, player=state.players[0], limit=100)
-                start_x, start_y = state.start_corners[state.players[0]]
-                for move in moves:
-                    cells = absolute_cells(move)
-                    self.assertTrue(any((x, y) == (start_x, start_y) for x, y in cells))
 
     @pytest.mark.parametrize("mode", ["classic", "duo"])
     def test_opening_move_must_cover_corner(self, mode):

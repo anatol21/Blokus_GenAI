@@ -10,7 +10,6 @@ import sys
 from blokus.engine import apply_move, get_occupied_cells, new_game
 from blokus.models import GameState, Move
 from blokus.review.types import Finding, ReviewPayload, ReviewResult, ReviewSummary, UncertainRisk
-from blokus.cli import run_cli
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
