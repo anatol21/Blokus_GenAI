@@ -3,16 +3,16 @@
   "board_size": 14,
   "players": [
     "blue",
-    "yellow"
+    "red"
   ],
   "start_corners": {
     "blue": [
-      0,
-      0
+      4,
+      4
     ],
-    "yellow": [
-      13,
-      13
+    "red": [
+      9,
+      9
     ]
   },
   "board": [
@@ -55,7 +55,7 @@
       "I2",
       "I1"
     ],
-    "yellow": [
+    "red": [
       "F5",
       "I5",
       "L5",
