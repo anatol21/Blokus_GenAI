@@ -12,7 +12,7 @@ from blokus.evaluate import main as evaluate_main
 from blokus.models import GameState, Move
 from blokus.players import choose_move
 from blokus.render import render_state
-from blokus.engine import advance_turn
+
 
 
 
