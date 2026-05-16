@@ -103,6 +103,7 @@ def cmd_apply(args: Namespace) -> int:
         print(result.reason)
         return 1
     new_state = apply_move(state, move)
+    new_state = pass_turn(new_state)
     _dump_json(new_state.to_dict(), args.output)
     return 0
 
