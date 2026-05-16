@@ -32,8 +32,10 @@ class AiTests(unittest.TestCase):
                 state = new_game(mode=mode)
                 player = state.players[0]
                 move = choose_move(state, player=player, strategy="default")
-
+                
                 self.assertIsNotNone(move)
+                assert move is not None  # for mypy type narrowing
+
                 self.assertEqual(move.player, player)
                 result = validate_move(state, move)
                 self.assertTrue(result.ok)
