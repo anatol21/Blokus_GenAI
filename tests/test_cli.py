@@ -66,7 +66,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             with output_path.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
-            self.assertEqual(payload["current_player"], "yellow")
+            self.assertEqual(payload["current_player"], "red")
             self.assertEqual(len(payload["history"]), 1)
             self.assertEqual(payload["board"][0][0], "B")
             self.assertNotIn("I1", payload["remaining_pieces"]["blue"])
@@ -121,7 +121,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             with output_path.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
-            self.assertEqual(payload["current_player"], "yellow")
+            self.assertEqual(payload["current_player"], "red")
             self.assertEqual(payload["consecutive_passes"], 1)
             self.assertFalse(payload["finished"])
 
@@ -150,7 +150,7 @@ class CliTests(unittest.TestCase):
                 payload = json.load(handle)
             self.assertEqual(payload["mode"], "duo")
             self.assertEqual(payload["board_size"], 14)
-            self.assertEqual(payload["players"], ["blue", "yellow"])
+            self.assertEqual(payload["players"], ["blue", "red"])
             self.assertEqual(payload["current_player"], "blue")
             self.assertEqual(len(payload["board"]), 14)
             self.assertEqual(len(payload["board"][0]), 14)
