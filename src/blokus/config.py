@@ -32,8 +32,8 @@ DUO_CONFIG = ModeConfig(
     board_size=14,
     players=("blue", "yellow"),  # 2 players only
     start_corners={
-        "blue": (0, 0),
-        "yellow": (13, 13),
+        "blue": (4, 4),
+        "yellow": (9, 9),
     },
 )
 
