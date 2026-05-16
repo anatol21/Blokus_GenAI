@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import argparse
 from blokus.engine import apply_move, compute_scores, new_game, occupied_square_counts, pass_turn
 from blokus.models import GameState, Move
 
@@ -153,7 +152,7 @@ def run_all_scenarios(directory: Path = SCENARIO_DIR) -> list[ScenarioResult]:
 
 def main() -> int:
     """CLI entry point for the evaluation harness."""
-    
+
     results = run_all_scenarios()
     passed = sum(1 for result in results if result.passed)
     for result in results:
