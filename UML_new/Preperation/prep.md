@@ -68,14 +68,45 @@ To keep the diagram focused purely on the game and engine (and per your request)
 
 ## Repository Overview - Sequence Diagram
 
+Game Initialization Flow (cli.py):
+1. User runs `blokus new --mode classic` or `blokus play` in the terminal.
+2. CLI parses arguments and delegates to `cli.cmd_new()` (or `cmd_play`).
+3. CLI calls `engine.new_game(mode, controllers)`.
+4. Engine calls `config.get_mode_config(mode)` to fetch the board size and players.
+5. Engine initializes and returns a fresh `GameState` object.
+6. CLI optionally serializes it to disk via `_dump_json()` or renders it to the terminal.
 
 Import Game Flow (cli.py):
-User runs blokus --load <file.json> ...
-cli._load_state() opens the file and parses the JSON.
-Calls GameState.from_dict(data) to rebuild the structural state.
-Calls engine.validate_loaded_state(loaded_state) to ensure the imported JSON isn't corrupted or mathematically impossible (e.g., verifying piece counts against the board).
+1. User runs blokus --load <file.json> ...
+2. cli._load_state() opens the file and parses the JSON.
+3. Calls GameState.from_dict(data) to rebuild the structural state.
+4. Calls engine.validate_loaded_state(loaded_state) to ensure the imported JSON isn't corrupted or mathematically impossible (e.g., verifying piece counts against the board).
 
 Export Game Flow (cli.py):
-User runs blokus --save <file.json> or blokus export <file.json>.
-CLI calls GameState.to_dict() to serialize the current game memory.
-cli._dump_json() writes it to the disk.
+1. User runs blokus --save <file.json> or blokus export <file.json>.
+2. CLI calls GameState.to_dict() to serialize the current game memory.
+3. cli._dump_json() writes it to the disk.
+
+## Repository Overview - Component Diagram
+
+The system is divided into four primary logical components:
+
+1. **Models & Config Component** (`models.py`, `config.py`, `pieces.py`)
+   - Defines the core data structures (`GameState`, `Move`) and game constraints.
+   - Has NO outgoing dependencies.
+
+2. **Core Engine Component** (`engine.py`, `players.py`)
+   - Functional module containing the rules, move validation, and AI logic.
+   - Depends strictly on the Models & Config component.
+
+3. **CLI Component** (`cli.py`)
+   - Handles terminal execution, JSON state import/export, and headless play.
+   - Depends on Engine and Models.
+
+4. **GUI Component** (`gui.py`, `gui_support.py`, `gui_assets.py`, `render.py`)
+   - Handles the Tkinter visual client, user interactions, and visual layout.
+   - Depends on Engine and Models.
+
+*Excluded:* `review/*`, `evaluate.py`, and `automation.py` should be excluded to focus strictly on the playable game architecture.
+
+
