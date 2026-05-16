@@ -81,8 +81,8 @@ def prepare_gui_assets(
         "board_duo": _ensure_render(
             graphics_dir / "BlokusBoardDuo.svg",
             cache / f"duo_board_{board_size}.png",
-            width=board_size*0.7,
-            height=board_size*0.7,
+            width = int(board_size * 0.7),
+            height = int(board_size * 0.7),
         ),
         "robot_blue": _ensure_render(
             graphics_dir / "player_blue.svg",

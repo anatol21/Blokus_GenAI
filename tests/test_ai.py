@@ -1,5 +1,6 @@
 import unittest
 import pytest
+from blokus.players import choose_move
 
 from blokus.engine import new_game, validate_move
 from blokus.players import choose_simple_move
