@@ -464,3 +464,7 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc))
         return 1
+
+def run_cli(argv=None):
+    """Compatibility wrapper for old tests."""
+    return main(argv)
