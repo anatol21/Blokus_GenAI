@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import cast
 import unittest
 import tempfile
-import pytest
+
 
 from blokus.engine import apply_move, get_occupied_cells, new_game
 from blokus.models import GameState, Move
@@ -217,7 +217,7 @@ class PersistenceTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
 
             with temp_path.open("r", encoding="utf-8") as f:
-                original = json.load(f)
+                _ = json.load(f)
 
             # Apply a move
             result = run_cli(

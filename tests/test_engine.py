@@ -1,9 +1,5 @@
 import unittest
 import pytest
-import tempfile
-import os
-import json
-from pathlib import Path
 
 from blokus.engine import (
     _anchor_cells,
