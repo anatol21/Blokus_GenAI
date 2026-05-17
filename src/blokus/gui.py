@@ -858,8 +858,9 @@ class BlokusGui:
             state = tk.NORMAL if controller_vars[player].get() == "computer" else tk.DISABLED
             strategy_menus[player].configure(state=state)
 
-        PLAYER_ORDER = ["blue", "red"] if self.state.mode == "duo" else PLAYER_ORDER
-        for row_index, player in enumerate(PLAYER_ORDER, start=2):
+        if self.state.mode == "duo": players = ["blue", "red"]  
+        else: players = PLAYER_ORDER
+        for row_index, player in enumerate(players, start=2):
             controller_vars[player] = tk.StringVar(value=self.state.controller_types.get(player, "human"))
             strategy_vars[player] = tk.StringVar(
                 value=self.state.controller_strategies.get(player, self.strategy_names[0])
@@ -886,11 +887,11 @@ class BlokusGui:
 
         def apply_settings() -> None:
             self.state.controller_types = {
-                player: controller_vars[player].get() for player in PLAYER_ORDER
+                player: controller_vars[player].get() for player in players
             }
             self.state.controller_strategies = {
                 player: strategy_vars[player].get() if controller_vars[player].get() == "computer" else self.strategy_names[0]
-                for player in PLAYER_ORDER
+                for player in players
             }
             self.status_text = "Player settings updated."
             self.close_panel(dialog)
@@ -898,7 +899,7 @@ class BlokusGui:
             self.redraw()
 
         button_frame = tk.Frame(dialog, bg="#f2d3cf")
-        button_frame.grid(row=len(PLAYER_ORDER) + 2, column=0, columnspan=3, pady=(self.scale_value(18), self.scale_value(20)))
+        button_frame.grid(row=len(players) + 2, column=0, columnspan=3, pady=(self.scale_value(18), self.scale_value(20)))
         tk.Button(button_frame, text="Apply", font=self.font_body, command=apply_settings).pack(side="left", padx=self.scale_value(6))
         tk.Button(button_frame, text="Cancel", font=self.font_body, command=lambda window=dialog: self.close_panel(window)).pack(side="left", padx=self.scale_value(6))
         dialog.protocol("WM_DELETE_WINDOW", lambda window=dialog: self.close_panel(window))

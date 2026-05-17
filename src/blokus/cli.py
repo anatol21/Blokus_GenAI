@@ -19,7 +19,6 @@ def _load_state(path: str) -> GameState:
 
     with Path(path).open("r", encoding="utf-8") as handle:
         state = GameState.from_dict(json.load(handle))
-        validate_loaded_state(state)
         return state
 
 

@@ -9,12 +9,12 @@ class GuiTests(unittest.TestCase):
     def test_restart_preserves_active_mode(self) -> None:
         gui = BlokusGui.__new__(BlokusGui)
         gui.mode = "duo"
-        gui.root = object()
-        gui.state = SimpleNamespace(
+        gui.root = object() # type: ignore[assignment]
+        gui.state = SimpleNamespace(  # type: ignore[assignment]
             controller_types={"blue": "human"},
             controller_strategies={"blue": "human"},
         )
-        gui.drag_state = "dragging"
+        gui.drag_state = "dragging" # type: ignore[assignment]
         gui.status_text = ""
 
         with patch("blokus.gui.messagebox.askokcancel", return_value=True) as ask_ok_cancel:
