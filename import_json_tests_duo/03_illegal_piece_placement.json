@@ -1,0 +1,109 @@
+{
+  "mode": "duo",
+  "board_size": 14,
+  "players": [
+    "blue",
+    "red"
+  ],
+  "start_corners": {
+    "blue": [
+      4,
+      4
+    ],
+    "red": [
+      9,
+      9
+    ]
+  },
+  "board": [
+    "..............",
+    "..............",
+    "..............",
+    "....B.........",
+    "....BB........",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    ".............."
+  ],
+  "remaining_pieces": {
+    "blue": [
+      "F5",
+      "I5",
+      "L5",
+      "N5",
+      "P5",
+      "T5",
+      "U5",
+      "V5",
+      "W5",
+      "X5",
+      "Y5",
+      "Z5",
+      "I4",
+      "L4",
+      "O4",
+      "T4",
+      "Z4",
+      "I3",
+      "V3"
+    ],
+    "red": [
+      "F5",
+      "I5",
+      "L5",
+      "N5",
+      "P5",
+      "T5",
+      "U5",
+      "V5",
+      "W5",
+      "X5",
+      "Y5",
+      "Z5",
+      "I4",
+      "L4",
+      "O4",
+      "T4",
+      "Z4",
+      "I3",
+      "V3",
+      "I2",
+      "I1"
+    ]
+  },
+  "history": [
+    {
+      "player": "blue",
+      "piece": "I2",
+      "x": 4,
+      "y": 4,
+      "rotation": 1,
+      "flipped": false
+    },
+    {
+      "player": "blue",
+      "piece": "I1",
+      "x": 4,
+      "y": 3,
+      "rotation": 0,
+      "flipped": false
+    }
+  ],
+  "current_player": "blue",
+  "consecutive_passes": 0,
+  "finished": false,
+  "controller_types": {
+    "blue": "human",
+    "red": "human"
+  },
+  "controller_strategies": {
+    "blue": "default",
+    "red": "default"
+  }
+}

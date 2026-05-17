@@ -18,7 +18,9 @@ def _load_state(path: str) -> GameState:
     """Load a serialized game state from JSON."""
 
     with Path(path).open("r", encoding="utf-8") as handle:
-        return GameState.from_dict(json.load(handle))
+        state = GameState.from_dict(json.load(handle))
+        validate_loaded_state(state)
+        return state
 
 
 def _dump_json(payload: Mapping[str, object], output_path: str | None) -> None:
