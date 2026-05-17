@@ -140,6 +140,22 @@ class CliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertIn("Controller types must be", completed.stdout)
 
+    def test_legal_moves_command_with_zero_limit_returns_empty_json_list(self) -> None:
+        """Evidence: LIST-03, R-F-02, R-F-06, R-T-06."""
+
+        fixture_path = REPO_ROOT / "fixtures" / "states" / "classic_initial.json"
+        completed = self.run_cli(
+            "legal-moves",
+            "--state",
+            str(fixture_path),
+            "--limit",
+            "0",
+            "--json",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stderr, "")
+        self.assertEqual(json.loads(completed.stdout), {"moves": []})
+
 
 if __name__ == "__main__":
     unittest.main()

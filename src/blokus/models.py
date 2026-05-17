@@ -1,12 +1,42 @@
 """Serializable game models."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 from blokus.config import get_mode_config, player_for_symbol, symbol_for_player
 from blokus.pieces import PIECE_IDS
 
 Coordinate = tuple[int, int]
+
+
+class MovePayload(TypedDict):
+    """JSON-friendly representation of one move."""
+
+    player: str
+    piece: str
+    x: int
+    y: int
+    rotation: int
+    flipped: bool
+
+
+class GameStatePayload(TypedDict):
+    """JSON-friendly representation of a complete game state."""
+
+    mode: str
+    board_size: int
+    players: list[str]
+    start_corners: dict[str, list[int]]
+    board: list[str]
+    remaining_pieces: dict[str, list[str]]
+    history: list[MovePayload]
+    current_player: str
+    consecutive_passes: int
+    finished: bool
+    controller_types: dict[str, str]
+    controller_strategies: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -20,7 +50,7 @@ class Move:
     rotation: int = 0
     flipped: bool = False
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self) -> MovePayload:
         """Serialize a move into JSON-friendly primitives."""
 
         return {
@@ -33,7 +63,7 @@ class Move:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "Move":
+    def from_dict(cls, data: Mapping[str, object]) -> "Move":
         """Rebuild a move from JSON-compatible data."""
 
         return cls(
@@ -112,7 +142,7 @@ class GameState:
             },
         )
 
-    def to_dict(self) -> dict[str, object]:
+    def to_dict(self) -> GameStatePayload:
         """Serialize the full game state into a JSON-friendly structure."""
 
         board_rows = [
@@ -138,7 +168,7 @@ class GameState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> "GameState":
+    def from_dict(cls, data: Mapping[str, object]) -> "GameState":
         """Validate and rebuild a game state from serialized JSON data."""
 
         mode = str(data["mode"])

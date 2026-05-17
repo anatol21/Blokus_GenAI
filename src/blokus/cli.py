@@ -1,6 +1,7 @@
 """Command-line interface for the Blokus engine."""
 
 from argparse import ArgumentParser, Namespace
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import sys
@@ -20,7 +21,7 @@ def _load_state(path: str) -> GameState:
         return GameState.from_dict(json.load(handle))
 
 
-def _dump_json(payload: dict[str, object], output_path: str | None) -> None:
+def _dump_json(payload: Mapping[str, object], output_path: str | None) -> None:
     """Write JSON either to a file or to standard output."""
 
     if output_path:

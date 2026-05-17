@@ -1,3 +1,5 @@
+from copy import deepcopy
+from typing import Any, Callable, cast
 import pytest
 from blokus.models import GameState, Move
 from blokus.engine import new_game, apply_move
@@ -23,9 +25,15 @@ def create_finished_game_state() -> GameState:
     state.finished = True
     return state
 
+
+def mutable_payload_from_state(state: GameState | None = None) -> dict[str, Any]:
+    """Return a mutable loose payload for tests that intentionally corrupt state."""
+    source_state = state or new_game()
+    return cast(dict[str, Any], deepcopy(source_state.to_dict()))
+
 # --- Round-Trip Integrity Tests ---
 
-def test_move_round_trip():
+def test_move_round_trip() -> None:
     """Verify that a Move object survives serialization round-trip."""
     original = Move(player="blue", piece="F", x=10, y=10, rotation=2, flipped=True)
     payload = original.to_dict()
@@ -40,7 +48,7 @@ def test_move_round_trip():
     create_mid_game_state,
     create_finished_game_state
 ], ids=["initial", "mid_game", "finished"])
-def test_gamestate_round_trip(state_factory):
+def test_gamestate_round_trip(state_factory: Callable[[], GameState]) -> None:
     """Verify that GameState survives serialization round-trip in all phases."""
     original = state_factory()
     payload = original.to_dict()
@@ -79,10 +87,13 @@ def test_gamestate_round_trip(state_factory):
     "unknown_piece_ids",
     "board_player_not_in_list"
 ])
-def test_from_dict_validation_errors(mutation_fn, expected_error, error_match):
+def test_from_dict_validation_errors(
+    mutation_fn: Callable[[dict[str, Any]], None],
+    expected_error: type[Exception],
+    error_match: str
+) -> None:
     """Verify that from_dict raises appropriate errors for malformed data."""
-    valid_state = new_game()
-    payload = valid_state.to_dict()
+    payload = mutable_payload_from_state()
     
     # Apply mutation to corrupt the payload
     mutation_fn(payload)
@@ -90,10 +101,10 @@ def test_from_dict_validation_errors(mutation_fn, expected_error, error_match):
     with pytest.raises(expected_error, match=error_match):
         GameState.from_dict(payload)
 
-def test_from_dict_with_corrupted_move_history():
+def test_from_dict_with_corrupted_move_history() -> None:
     """Verify history items are also validated."""
     state = create_mid_game_state()
-    payload = state.to_dict()
+    payload = mutable_payload_from_state(state)
     
     # Corrupt one move in history
     payload["history"][0]["x"] = "invalid" # Should cause ValueError when calling int()
