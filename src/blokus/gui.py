@@ -858,8 +858,10 @@ class BlokusGui:
             state = tk.NORMAL if controller_vars[player].get() == "computer" else tk.DISABLED
             strategy_menus[player].configure(state=state)
 
-        if self.state.mode == "duo": players = ["blue", "red"]  
-        else: players = PLAYER_ORDER
+        if self.state.mode == "duo": 
+            players = ["blue", "red"]  
+        else: 
+            players = PLAYER_ORDER
         for row_index, player in enumerate(players, start=2):
             controller_vars[player] = tk.StringVar(value=self.state.controller_types.get(player, "human"))
             strategy_vars[player] = tk.StringVar(
