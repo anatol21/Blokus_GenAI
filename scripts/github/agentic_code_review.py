@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Run agentic pull-request review and publish its artifacts."""
+"""Run the agentic pull-request review workflow from the command line.
+
+This script is the entry point for producing agentic review artifacts in JSON
+and Markdown form. It prepares repository imports, loads review configuration,
+resolves optional GitHub event/ref inputs, runs ReviewCoordinator, and writes
+the resulting artifacts to configured output paths. When same-repo PR metadata
+and GitHub credentials are available, it also posts or updates a pull-request
+comment with the rendered review. The process prints the Markdown review and
+uses the review verdict to choose its exit code.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +39,30 @@ COMMENT_MARKERS: "dict[str, str] | None" = None
 
 
 def main() -> int:
-    """Main entry point - sets up import path and runs review."""
+    """Run the agentic PR review CLI workflow.
+
+    Purpose:
+        Load config, resolve event/ref inputs, run ReviewCoordinator, write
+        JSON/Markdown artifacts, optionally publish a GitHub PR comment, print
+        Markdown, and return a verdict-based exit code.
+    Important parameters:
+        Uses argparse results plus GITHUB_EVENT_PATH, REVIEW_BASE_REF,
+        REVIEW_HEAD_REF, REVIEW_PULL_NUMBER, GITHUB_REPOSITORY, and
+        GITHUB_TOKEN.
+    Return value:
+        0 when run.result.verdict == "LGTM"; otherwise 1.
+    Side effects:
+        Reads event JSON when present, writes artifact files, creates output
+        directories, may call GitHubClient.upsert_issue_comment(), and prints
+        Markdown to stdout.
+    Failure or fallback behavior:
+        Missing event path is ignored; invalid REVIEW_PULL_NUMBER becomes None;
+        GitHub comment publication is skipped unless same_repo, PR number,
+        repository, and token are all present.
+    Trace:
+        _parse_args(), _resolve_repo_root(), load_review_config(),
+        ReviewCoordinator.run(), _resolve_output_path(), GitHubClient.
+    """
     # Lazy-load dependencies to avoid import-time side effects
     _lazy_imports()
 
@@ -157,6 +189,24 @@ def _setup_import_path(repo_root: Path) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the review script.
+
+    Purpose:
+        Define optional ref/PR overrides and output artifact paths.
+    Important parameters:
+        Reads process argv through argparse.
+    Return value:
+        argparse.Namespace with base_ref, head_ref, pr_number, json_out, and
+        markdown_out.
+    Side effects:
+        May print argparse help and exit when invoked with standard argparse
+        help/error behavior.
+    Failure or fallback behavior:
+        json_out and markdown_out default to artifacts/agentic-review paths.
+    Trace:
+        argparse.ArgumentParser, --base-ref, --head-ref, --pr-number,
+        --json-out, --markdown-out.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-ref", help="Override the review base ref.")
     parser.add_argument("--head-ref", help="Override the review head ref.")
@@ -175,6 +225,21 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _env_int(name: str) -> int | None:
+    """Parse an integer environment variable.
+
+    Purpose:
+        Convert optional numeric environment inputs such as REVIEW_PULL_NUMBER.
+    Important parameters:
+        name is the environment variable key.
+    Return value:
+        int when the variable exists and parses; otherwise None.
+    Side effects:
+        Reads os.environ.
+    Failure or fallback behavior:
+        Missing, empty, or non-integer values return None.
+    Trace:
+        os.environ.get(), int(raw.strip()).
+    """
     raw = os.environ.get(name)
     if not raw:
         return None
@@ -226,6 +291,22 @@ def _load_event_payload_if_available(
 
 
 def _resolve_repo_root() -> Path:
+    """Resolve the repository root used by this script.
+
+    Purpose:
+        Prefer GITHUB_WORKSPACE when present, otherwise use the script's
+        repository-relative parent path.
+    Important parameters:
+        None; reads GITHUB_WORKSPACE from the environment.
+    Return value:
+        Resolved Path for the workspace/repository root.
+    Side effects:
+        Reads os.environ.
+    Failure or fallback behavior:
+        If GITHUB_WORKSPACE is absent, falls back to Path(__file__).parents[2].
+    Trace:
+        os.environ.get("GITHUB_WORKSPACE"), Path.resolve(), REPO_ROOT.
+    """
     workspace = os.environ.get("GITHUB_WORKSPACE")
     if workspace:
         return Path(workspace).resolve()
@@ -234,6 +315,22 @@ def _resolve_repo_root() -> Path:
 
 
 def _resolve_output_path(repo_root: Path, raw_path: str) -> Path:
+    """Resolve an artifact output path.
+
+    Purpose:
+        Interpret CLI output paths relative to the repo root unless absolute.
+    Important parameters:
+        repo_root is the base directory; raw_path is the CLI-provided path.
+    Return value:
+        Absolute Path for artifact writing.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Absolute raw paths are returned unchanged; relative paths resolve under
+        repo_root.
+    Trace:
+        Path(raw_path), Path.is_absolute(), Path.resolve().
+    """
     path = Path(raw_path)
     if path.is_absolute():
         return path

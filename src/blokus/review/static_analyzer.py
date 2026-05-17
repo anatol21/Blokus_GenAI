@@ -1,4 +1,13 @@
-"""Static-analysis support for agentic review."""
+"""Diff-aware static-analysis support for the agentic PR review flow.
+
+This module runs deterministic checks over changed executable Python and shell
+files before the agentic review coordinator renders final findings. It invokes
+local tools such as compileall, Ruff, Mypy, bash syntax checks, and ShellCheck
+when they are available, then normalizes changed-line diagnostics into Finding
+objects. It also emits UncertainRisk records for skipped, capped, unavailable,
+or unparsable analysis and adds repository-specific heuristics for sensitive
+paths, dependency metadata, and missing nearby tests.
+"""
 
 from __future__ import annotations
 
@@ -61,12 +70,60 @@ class _ToolParseResult:
 
 
 class StaticAnalyzer:
-    """Run diff-aware static-analysis checks and heuristics."""
+    """Coordinate deterministic static checks and repository heuristics.
+
+    Purpose:
+        Provide the static-analysis layer used by ReviewCoordinator before any
+        provider-backed specialist review runs.
+    Important parameters:
+        config: ReviewConfig stored at construction time; supplies repo_root,
+            command timeout settings, and heuristic path configuration.
+    Return value:
+        Public analysis returns StaticAnalysisReport instances containing
+        normalized Finding and UncertainRisk objects.
+    Side effects:
+        Methods may execute local subprocesses under config.repo_root and may
+        create temporary Mypy response files for oversized command batches.
+    Failure or fallback behavior:
+        Missing tools, capped analysis, command timeouts, and invalid JSON tool
+        output are represented as uncertain risks instead of being treated as a
+        complete static-analysis result.
+    Trace:
+        analyze(), _run_command(), _discover_tool(), _build_mypy_commands(),
+        _heuristic_findings(), StaticAnalysisReport.
+    """
 
     def __init__(self, config: ReviewConfig) -> None:
         self.config = config
 
     def analyze(self, context: ReviewContext) -> StaticAnalysisReport:
+        """Run changed-file static analysis and return a normalized report.
+
+        Purpose:
+            Select changed executable Python and shell files, run bounded local
+            tool checks, parse changed-line diagnostics, add repository
+            heuristics, and compute the static-analysis posture.
+        Important parameters:
+            context: ReviewContext containing changed_files, executable_files,
+                file categories, paths, and changed line spans.
+        Return value:
+            StaticAnalysisReport with findings, uncertain_risks, executed
+            command strings, and a posture of "not_run", "clean",
+            "issues_found", or "unavailable".
+        Side effects:
+            Executes compileall, Ruff, Mypy, bash, and ShellCheck subprocesses
+            when relevant and available; deletes Mypy temporary response files
+            in a finally block.
+        Failure or fallback behavior:
+            Caps compileall at _MAX_COMPILEALL_FILES, skips Ruff and Mypy above
+            _MAX_EXPENSIVE_PYTHON_ANALYSIS_FILES, records missing tools as
+            UncertainRisk entries, and propagates parser uncertainty from JSON
+            tool output.
+        Trace:
+            _build_tool_batches(), _discover_tool(), _run_command(),
+            _parse_compileall(), _parse_ruff(), _parse_mypy(), _parse_bash(),
+            _parse_shellcheck(), _heuristic_findings().
+        """
         python_files = [changed_file for changed_file in context.executable_files if "python" in changed_file.categories]
         shell_files = [changed_file for changed_file in context.executable_files if "shell" in changed_file.categories]
 
@@ -305,6 +362,29 @@ class StaticAnalyzer:
         )
 
     def _parse_ruff(self, context: ReviewContext, tool_run: ToolRun) -> _ToolParseResult:
+        """Convert Ruff JSON diagnostics into changed-line findings.
+
+        Purpose:
+            Parse stdout from `ruff check --output-format json` and emit
+            findings only for diagnostics whose file and start line match the
+            review diff.
+        Important parameters:
+            context: ReviewContext used to verify changed files and line spans.
+            tool_run: ToolRun containing Ruff stdout, stderr, return code, and
+                command text.
+        Return value:
+            _ToolParseResult containing findings plus any JSON parsing
+            uncertainty.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Empty stdout returns no findings; oversized, invalid, or
+            wrong-shaped JSON returns an UncertainRisk with unavailable=True;
+            malformed entries are skipped.
+        Trace:
+            _load_json_output(), _normalize_tool_path(), _positive_int(),
+            _lookup_changed_file(), stable_finding_id().
+        """
         if not tool_run.stdout.strip():
             return _ToolParseResult()
 
@@ -355,6 +435,26 @@ class StaticAnalyzer:
         return _ToolParseResult(findings=tuple(findings))
 
     def _parse_mypy(self, context: ReviewContext, tool_run: ToolRun) -> list[Finding]:
+        """Parse Mypy text output into changed-line type findings.
+
+        Purpose:
+            Read Mypy stdout lines matching _MYPY_RE and report only `error`
+            diagnostics that map to changed lines.
+        Important parameters:
+            context: ReviewContext used for changed-file and changed-line
+                filtering.
+            tool_run: ToolRun containing Mypy stdout.
+        Return value:
+            High-severity Finding objects for changed-line Mypy errors.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Non-matching lines, `note` diagnostics, unnormalizable paths, and
+            diagnostics outside changed lines are ignored.
+        Trace:
+            _MYPY_RE, _normalize_tool_path(), _lookup_changed_file(),
+            stable_finding_id().
+        """
         findings: list[Finding] = []
         for raw_line in tool_run.stdout.splitlines():
             match = _MYPY_RE.match(raw_line.strip())
@@ -389,6 +489,27 @@ class StaticAnalyzer:
         return findings
 
     def _parse_compileall(self, context: ReviewContext, tool_run: ToolRun) -> list[Finding]:
+        """Parse compileall failures into Python compile-error findings.
+
+        Purpose:
+            Use _COMPILEALL_RE over combined stdout and stderr from
+            `python -m compileall` to identify changed Python files that failed
+            to compile.
+        Important parameters:
+            context: ReviewContext used to restrict findings to changed lines.
+            tool_run: ToolRun produced by the compileall command.
+        Return value:
+            High-severity Python compile-error findings.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Return code 0 returns no findings; unmatched output,
+            unnormalizable paths, and diagnostics outside changed lines are
+            ignored.
+        Trace:
+            _COMPILEALL_RE, _normalize_tool_path(), _lookup_changed_file(),
+            stable_finding_id().
+        """
         if tool_run.returncode == 0:
             return []
         findings: list[Finding] = []
@@ -422,6 +543,26 @@ class StaticAnalyzer:
         return findings
 
     def _parse_bash(self, shell_files: list[ChangedFile], tool_run: ToolRun) -> list[Finding]:
+        """Parse bash syntax-check stderr for changed shell-script lines.
+
+        Purpose:
+            Convert `bash -n` syntax errors into findings for changed shell
+            files.
+        Important parameters:
+            shell_files: Changed shell files selected by analyze().
+            tool_run: ToolRun produced by the bash syntax-check command.
+        Return value:
+            High-severity shell syntax findings.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Return code 0 returns no findings; stderr lines that do not match
+            _BASH_RE, paths outside shell_files, invalid line numbers, and
+            unchanged lines are ignored.
+        Trace:
+            _BASH_RE, _normalize_tool_path(), _positive_int(),
+            ChangedFile.touches_line(), stable_finding_id().
+        """
         if tool_run.returncode == 0:
             return []
         findings: list[Finding] = []
@@ -457,6 +598,28 @@ class StaticAnalyzer:
         return findings
 
     def _parse_shellcheck(self, shell_files: list[ChangedFile], tool_run: ToolRun) -> _ToolParseResult:
+        """Convert ShellCheck JSON comments into changed-line findings.
+
+        Purpose:
+            Parse stdout from `shellcheck -f json1` and report comments that
+            apply to changed shell-script lines.
+        Important parameters:
+            shell_files: Changed shell files selected by analyze().
+            tool_run: ToolRun containing ShellCheck stdout, stderr, return code,
+                and command text.
+        Return value:
+            _ToolParseResult containing findings plus any JSON parsing
+            uncertainty.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Empty stdout returns no result; oversized, invalid, or wrong-shaped
+            JSON returns an UncertainRisk with unavailable=True; missing or
+            non-list `comments` returns no findings.
+        Trace:
+            _load_json_output(), _normalize_tool_path(), _positive_int(),
+            ChangedFile.touches_line(), stable_finding_id().
+        """
         if not tool_run.stdout.strip():
             return _ToolParseResult()
         findings: list[Finding] = []
@@ -503,6 +666,26 @@ class StaticAnalyzer:
         return _ToolParseResult(findings=tuple(findings))
 
     def _heuristic_findings(self, context: ReviewContext) -> list[Finding]:
+        """Add repository-specific findings that do not come from tools.
+
+        Purpose:
+            Flag path-based review risks for schemas, fixtures, CLI entrypoints,
+            serialization-sensitive files, missing test updates, and
+            workflow-sensitive paths.
+        Important parameters:
+            context: ReviewContext containing all changed file paths.
+        Return value:
+            Normalized Finding objects with source="static-analyzer".
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Heuristics emit findings only when their path and coverage
+            conditions match; the generic missing-tests finding is skipped if a
+            more specific heuristic finding already exists.
+        Trace:
+            config.heuristics, tests_missing(), is_sensitive_path(),
+            stable_finding_id().
+        """
         findings: list[Finding] = []
         changed_paths = {changed_file.path for changed_file in context.changed_files}
         test_paths = {path for path in changed_paths if path.startswith("tests/")}
@@ -635,6 +818,24 @@ class StaticAnalyzer:
         return findings
 
     def _heuristic_uncertain_risks(self, context: ReviewContext) -> list[UncertainRisk]:
+        """Record uncertainty for dependency metadata changes.
+
+        Purpose:
+            Note that dependency-related files changed when configured
+            dependency paths appear in the diff.
+        Important parameters:
+            context: ReviewContext containing changed file paths.
+        Return value:
+            A one-item UncertainRisk list when dependency paths changed;
+            otherwise an empty list.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            No dependency-path overlap returns no risk. The function does not
+            inspect dependency contents or verify supply-chain intent.
+        Trace:
+            config.heuristics.dependency_files, UncertainRisk.
+        """
         changed_paths = {changed_file.path for changed_file in context.changed_files}
         dependency_paths = changed_paths & set(self.config.heuristics.dependency_files)
         if not dependency_paths:
@@ -657,6 +858,26 @@ class StaticAnalyzer:
         return None
 
     def _run_command(self, args: list[str]) -> ToolRun:
+        """Execute one static-analysis subprocess and capture its streams.
+
+        Purpose:
+            Run a local command in the repository root with captured text output
+            and the configured timeout.
+        Important parameters:
+            args: Command argument list passed directly to subprocess.run().
+        Return value:
+            ToolRun containing the joined command string, return code, stdout,
+            and stderr.
+        Side effects:
+            Executes a local subprocess with cwd=config.repo_root.
+        Failure or fallback behavior:
+            subprocess.TimeoutExpired is converted to returncode 124 with any
+            captured partial streams coerced to text and a timeout message
+            appended to stderr.
+        Trace:
+            subprocess.run(), config.repo_root, config.provider.timeout_seconds,
+            _coerce_stream_text(), ToolRun.
+        """
         with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
             try:
                 completed = subprocess.run(
@@ -715,6 +936,28 @@ class StaticAnalyzer:
         mypy_path: str,
         python_files: list[ChangedFile],
     ) -> tuple[list[list[str]], list[Path]]:
+        """Build Mypy command arguments and cleanup paths.
+
+        Purpose:
+            Create Mypy invocations using pyproject.toml and stable output
+            flags, falling back to one response-file invocation when direct
+            batching would split the file list.
+        Important parameters:
+            mypy_path: Resolved path to the Mypy executable.
+            python_files: Changed Python files selected by analyze().
+        Return value:
+            A tuple of command argument lists and temporary Paths that callers
+            must delete after command execution.
+        Side effects:
+            May create a `.agentic-mypy-*.txt` temporary response file under
+            config.repo_root.
+        Failure or fallback behavior:
+            If response-file creation or writing fails, the temporary file is
+            unlinked before the exception is re-raised.
+        Trace:
+            _build_tool_batches(), _safe_tool_path(),
+            tempfile.NamedTemporaryFile(), analyze() finally cleanup.
+        """
         prefix_args = [
             mypy_path,
             "--config-file",
@@ -820,6 +1063,26 @@ def _build_tool_batches(
     *,
     supports_option_terminator: bool = False,
 ) -> list[list[str]]:
+    """Split changed-file tool invocations into bounded argument batches.
+
+    Purpose:
+        Build command argument lists that combine a tool prefix with changed-file
+        paths while respecting file-count and argument-length limits.
+    Important parameters:
+        prefix_args: Command prefix placed before file paths.
+        changed_files: Changed files whose paths should be passed to the tool.
+        supports_option_terminator: When true, inserts `--` before paths for
+            tools that support option termination.
+    Return value:
+        A list of command argument lists; empty changed_files returns [].
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Paths are normalized through _safe_tool_path(); batches split at
+        _MAX_TOOL_BATCH_FILES or _MAX_TOOL_BATCH_CHARS.
+    Trace:
+        _MAX_TOOL_BATCH_FILES, _MAX_TOOL_BATCH_CHARS, _safe_tool_path().
+    """
     if not changed_files:
         return []
 

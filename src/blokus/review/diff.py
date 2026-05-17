@@ -1,4 +1,13 @@
-"""Git diff loading and review-context construction."""
+"""Build diff-backed review context for the agentic PR review flow.
+
+This module resolves review refs, reads local git history, streams unified diff
+patches, and converts patch metadata into ReviewContext and ChangedFile objects.
+It tracks changed-line spans, path/category metadata, executable files,
+performance-sensitive markers, excluded files, commit-context limits, and
+stored patch truncation for downstream static and LLM review. The parser is
+bounded and local-git based; it does not claim parity with GitHub's PR file
+model or complete repository history.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +41,25 @@ _PATCH_TRUNCATION_MARKER = "\n... [diff context truncated for scale]\n"
 
 @dataclass(frozen=True)
 class _PatchBlock:
+    """Internal normalized patch block produced from one git diff file block.
+
+    Purpose:
+        Carry parsed patch metadata before conversion to ChangedFile.
+    Important parameters:
+        path is the selected review path, status is git-like status metadata,
+        patch is bounded stored diff text, line_spans are changed post-change
+        lines, old_path carries rename/copy source metadata, and the boolean
+        fields carry performance/truncation signals.
+    Return value:
+        Dataclass value consumed by _load_changed_files().
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Instances are only built when _PatchAccumulator.build() can determine a
+        non-null path.
+    Trace:
+        _PatchAccumulator.build(), _load_changed_files(), ChangedFile.
+    """
     path: str
     status: str
     patch: str
@@ -44,12 +72,49 @@ class _PatchBlock:
 
 @dataclass
 class _LineSpanTracker:
+    """Track post-change line spans while reading unified diff lines.
+
+    Purpose:
+        Convert hunk headers and patch body lines into LineSpan values for
+        additions and deletion-only anchors.
+    Important parameters:
+        spans stores completed spans, current_line tracks the new-file hunk
+        line, span_start tracks an active addition span, and deletion_anchor
+        tracks zero-line hunks.
+    Return value:
+        finish() returns tuple[LineSpan, ...].
+    Side effects:
+        Mutates tracker state while feed() is called.
+    Failure or fallback behavior:
+        Lines outside hunks and file header lines are ignored; deletion-only
+        hunks produce a one-line anchor.
+    Trace:
+        _HUNK_RE, feed(), finish(), _flush_current_hunk(), LineSpan.
+    """
     spans: list[LineSpan] = field(default_factory=list)
     current_line: int | None = None
     span_start: int | None = None
     deletion_anchor: int | None = None
 
     def feed(self, raw_line: str) -> None:
+        """Consume one raw unified diff line and update changed-line state.
+
+        Purpose:
+            Start new hunks, track added-line spans, ignore deletion/context
+            marker lines as appropriate, and flush completed spans.
+        Important parameters:
+            raw_line is one line from a git patch, without requiring a trailing
+            newline.
+        Return value:
+            None.
+        Side effects:
+            Mutates current_line, span_start, deletion_anchor, and spans.
+        Failure or fallback behavior:
+            Non-hunk lines before any current hunk, `---`/`+++` file headers,
+            deletion lines, and `\\ No newline` markers do not create additions.
+        Trace:
+            _HUNK_RE, _flush_current_hunk(), LineSpan.
+        """
         if raw_line.startswith("diff --git "):
             if self.current_line is not None:
                 self._flush_current_hunk()
@@ -91,6 +156,23 @@ class _LineSpanTracker:
         self.current_line += 1
 
     def finish(self) -> tuple[LineSpan, ...]:
+        """Flush any active hunk state and return parsed changed-line spans.
+
+        Purpose:
+            Complete the final active addition span or deletion anchor after all
+            patch lines have been fed.
+        Important parameters:
+            Uses the tracker's current mutable state.
+        Return value:
+            tuple of LineSpan objects.
+        Side effects:
+            May append one final span and clears active span/deletion state
+            through _flush_current_hunk().
+        Failure or fallback behavior:
+            If no hunk was active, returns the spans already collected.
+        Trace:
+            _flush_current_hunk(), LineSpan.
+        """
         if self.current_line is not None:
             self._flush_current_hunk()
         return tuple(self.spans)
@@ -107,6 +189,26 @@ class _LineSpanTracker:
 
 @dataclass
 class _PatchAccumulator:
+    """Accumulate one git diff file block into a bounded _PatchBlock.
+
+    Purpose:
+        Track paths, status, line spans, performance sensitivity, and stored
+        patch text while _iter_git_patch_blocks() streams stdout.
+    Important parameters:
+        config supplies performance markers. tracker parses line spans.
+        old_path/new_path/status mirror patch metadata. stored_parts and
+        stored_chars implement MAX_STORED_PATCH_CHARS truncation.
+    Return value:
+        build() returns _PatchBlock or None.
+    Side effects:
+        Mutates accumulator state as each patch line is added.
+    Failure or fallback behavior:
+        build() returns None when no path can be inferred; truncated patches are
+        marked with _PATCH_TRUNCATION_MARKER.
+    Trace:
+        add_line(), build(), _track_paths(), _track_performance(),
+        _append_bounded(), MAX_STORED_PATCH_CHARS.
+    """
     config: ReviewConfig
     tracker: _LineSpanTracker = field(default_factory=_LineSpanTracker)
     status: str = "M"
@@ -131,6 +233,26 @@ class _PatchAccumulator:
         self._diff_marker_pattern = _diff_marker_pattern(self.config.performance.diff_markers)
 
     def add_line(self, line: str) -> None:
+        """Process one patch line into all accumulator subsystems.
+
+        Purpose:
+            Feed the line-span tracker, update path/status metadata, update
+            performance sensitivity, and append bounded patch context.
+        Important parameters:
+            line is one stdout line from `git diff`, with the trailing newline
+            already stripped.
+        Return value:
+            None.
+        Side effects:
+            Mutates tracker, path/status fields, performance_sensitive,
+            stored_parts, stored_chars, and patch_truncated.
+        Failure or fallback behavior:
+            Once patch_truncated is true, further patch text is not stored,
+            though line-span and metadata tracking still continue.
+        Trace:
+            _LineSpanTracker.feed(), _track_paths(), _track_performance(),
+            _append_bounded().
+        """
         if self._should_skip_remaining_lines():
             if self._should_scan_post_cap_performance(line):
                 self._track_performance(line)
@@ -148,6 +270,25 @@ class _PatchAccumulator:
         self._append_bounded(line)
 
     def build(self) -> _PatchBlock | None:
+        """Finalize accumulated patch metadata into a _PatchBlock.
+
+        Purpose:
+            Choose the review path, append the truncation marker if needed,
+            flush line spans, and expose rename/copy source metadata.
+        Important parameters:
+            Uses accumulated old_path, new_path, stored_parts, tracker, status,
+            performance_sensitive, and patch_truncated.
+        Return value:
+            _PatchBlock when a path is available; otherwise None.
+        Side effects:
+            Calls tracker.finish(), which may mutate tracker state by flushing a
+            final span.
+        Failure or fallback behavior:
+            Uses old_path when new_path is missing or `/dev/null`; returns None
+            if neither path is available.
+        Trace:
+            _PATCH_TRUNCATION_MARKER, _LineSpanTracker.finish(), _PatchBlock.
+        """
         path = self.new_path if self.new_path and self.new_path != "/dev/null" else self.old_path
         if path is None:
             return None
@@ -280,7 +421,31 @@ def build_review_context(
     head_ref: str | None = None,
     pr_number: int | None = None,
 ) -> ReviewContext:
-    """Collect diff-backed review context for one review run."""
+    """Collect the diff-backed inputs for one review run.
+
+    Purpose:
+        Resolve base/head refs, read commit metadata, load changed files, filter
+        excluded paths, identify executable files, and assemble ReviewContext.
+    Important parameters:
+        config supplies repo_root and excluded_globs. event_payload may provide
+        pull_request base/head SHAs and PR number. base_ref, head_ref, and
+        pr_number are fallback explicit inputs.
+    Return value:
+        ReviewContext with ReviewPayload, resolved refs, branch name, bounded
+        commit subjects, included changed files, executable files, impact, bias
+        risks, same_repo, commit_context_truncated, and raw_diff="".
+    Side effects:
+        Runs git subprocesses through _git_output(), _git_lines(), and
+        _load_changed_files().
+    Failure or fallback behavior:
+        Missing or invalid git refs can raise subprocess.CalledProcessError via
+        _git_output() or _iter_git_patch_blocks(). Partial PR payloads fall back
+        through _resolve_refs().
+    Trace:
+        _resolve_refs(), _git_output(), _git_lines(), MAX_REVIEW_CONTEXT_COMMITS,
+        _load_changed_files(), _is_excluded(), _classify_impact(),
+        _infer_bias_risks().
+    """
 
     base_value, head_value, number, same_repo = _resolve_refs(event_payload, base_ref, head_ref, pr_number)
     base_sha = _git_output(config.repo_root, ["rev-parse", base_value]).strip()
@@ -314,7 +479,26 @@ def build_review_context(
 
 
 def should_run_performance_review(config: ReviewConfig, context: ReviewContext) -> bool:
-    """Return whether the performance specialist should run."""
+    """Return whether the performance specialist should run for this context.
+
+    Purpose:
+        Check whether any executable changed file was already marked
+        performance_sensitive during patch accumulation.
+    Important parameters:
+        context supplies executable_files. config is accepted for the public
+        call shape but is currently unused.
+    Return value:
+        True if any executable ChangedFile has performance_sensitive=True;
+        otherwise False.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Non-executable files do not trigger this check even if marked
+        performance_sensitive.
+    Trace:
+        ChangedFile.performance_sensitive, ReviewContext.executable_files,
+        _PatchAccumulator._track_performance().
+    """
 
     del config
     return any(changed_file.performance_sensitive for changed_file in context.executable_files)
@@ -326,6 +510,24 @@ def _resolve_refs(
     head_ref: str | None,
     pr_number: int | None,
 ) -> tuple[str, str, int | None, bool]:
+    """Resolve review base/head refs and PR metadata.
+
+    Purpose:
+        Prefer pull_request base/head SHAs from an event payload when both are
+        present, otherwise fall back to explicit refs or default local refs.
+    Important parameters:
+        event_payload may contain a pull_request dict. base_ref, head_ref, and
+        pr_number are fallback values.
+    Return value:
+        (base_ref_or_sha, head_ref_or_sha, pr_number_or_none, same_repo).
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Partial or malformed pull_request payloads fall back to base_ref or
+        "origin/main", head_ref or "HEAD", pr_number, and same_repo=True.
+    Trace:
+        _nested_sha(), _optional_int(), _same_repo().
+    """
     resolved_base = base_ref or "origin/main"
     resolved_head = head_ref or "HEAD"
 
@@ -347,6 +549,26 @@ def _resolve_refs(
 
 
 def _load_changed_files(config: ReviewConfig, base_ref: str, head_ref: str) -> tuple[ChangedFile, ...]:
+    """Load changed files from a three-dot git diff and normalize them.
+
+    Purpose:
+        Stream patch blocks for `base_ref...head_ref` and convert each block to
+        a ChangedFile with executable, category, rename, performance, and
+        truncation metadata.
+    Important parameters:
+        config supplies repo_root and parsing/performance settings. base_ref and
+        head_ref are expected to be git-resolvable refs or SHAs.
+    Return value:
+        tuple[ChangedFile, ...].
+    Side effects:
+        Runs git diff indirectly through _iter_git_patch_blocks().
+    Failure or fallback behavior:
+        Propagates subprocess.CalledProcessError from _iter_git_patch_blocks()
+        when git exits non-zero.
+    Trace:
+        _iter_git_patch_blocks(), _is_executable_path(), _categorize_path(),
+        ChangedFile.
+    """
     diff_ref = f"{base_ref}...{head_ref}"
     changed_files: list[ChangedFile] = []
     stored_patch_files = 0
@@ -393,6 +615,21 @@ def _current_branch(repo_root: Path) -> str:
 
 
 def _parse_line_spans(patch_text: str) -> list[LineSpan]:
+    """Parse changed post-change line spans from patch text.
+
+    Purpose:
+        Convenience wrapper that feeds split patch lines into _LineSpanTracker.
+    Important parameters:
+        patch_text is unified diff text for one or more file blocks.
+    Return value:
+        list[LineSpan] produced by the tracker.
+    Side effects:
+        None outside local tracker state.
+    Failure or fallback behavior:
+        Lines not recognized by _LineSpanTracker.feed() are ignored.
+    Trace:
+        _LineSpanTracker.feed(), _LineSpanTracker.finish(), _HUNK_RE.
+    """
     tracker = _LineSpanTracker()
     for raw_line in patch_text.splitlines():
         tracker.feed(raw_line)
@@ -404,6 +641,26 @@ def _iter_git_patch_blocks(
     repo_root: Path,
     args: list[str],
 ) -> Iterator[_PatchBlock]:
+    """Stream git patch output into _PatchBlock objects.
+
+    Purpose:
+        Run a git command, split stdout into file-level diff blocks, and yield
+        normalized patch blocks without first storing the full diff output.
+    Important parameters:
+        config is passed to each _PatchAccumulator. repo_root is the subprocess
+        cwd. args are appended after `git`.
+    Return value:
+        Iterator[_PatchBlock].
+    Side effects:
+        Starts subprocess.Popen(["git", *args]), reads stdout, starts a daemon
+        thread to drain stderr, closes pipes, and waits for the process.
+    Failure or fallback behavior:
+        Raises subprocess.CalledProcessError with stderr if git exits non-zero.
+        Blocks with no inferred path are skipped through _PatchAccumulator.build().
+    Trace:
+        subprocess.Popen, threading.Thread, _PatchAccumulator.add_line(),
+        _PatchAccumulator.build().
+    """
     process = subprocess.Popen(
         ["git", *args],
         cwd=repo_root,
@@ -517,6 +774,22 @@ def _optional_int(value: object, default: int | None) -> int | None:
 
 
 def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:
+    """Classify coarse review impact from included changed paths.
+
+    Purpose:
+        Assign low/moderate/high/critical impact using path heuristics.
+    Important parameters:
+        changed_files supplies already-filtered ChangedFile paths.
+    Return value:
+        "low", "moderate", "high", or "critical".
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Empty changes are "low"; only hard-coded critical markers, `.github/`,
+        and known path prefixes affect higher levels.
+    Trace:
+        critical_markers, path prefix checks in _classify_impact().
+    """
     if not changed_files:
         return "low"
 
@@ -541,6 +814,24 @@ def _classify_impact(changed_files: tuple[ChangedFile, ...]) -> str:
 
 
 def _infer_bias_risks(branch_name: str, commits: list[str]) -> tuple[str, ...]:
+    """Produce ordered bias-risk prompts from branch and commit text.
+
+    Purpose:
+        Return the review flow's standard bias-risk labels and prioritize
+        self-declared-correctness-bias when branch/commit text contains matching
+        terms.
+    Important parameters:
+        branch_name and commit subject strings form weak_context.
+    Return value:
+        tuple[str, ...] with duplicates removed while preserving order.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        If _SELF_DECLARED_RE does not match, self-declared-correctness-bias is
+        appended rather than prepended.
+    Trace:
+        _SELF_DECLARED_RE, MAX_REVIEW_CONTEXT_COMMITS, dict.fromkeys().
+    """
     risks = [
         "authority-bias",
         "reverse-authority-bias",
@@ -559,6 +850,22 @@ def _infer_bias_risks(branch_name: str, commits: list[str]) -> tuple[str, ...]:
 
 
 def _categorize_path(path: str) -> list[str]:
+    """Return simple path categories used by downstream review stages.
+
+    Purpose:
+        Classify a changed path as python, shell, workflow, schema, fixture,
+        test, and/or docs.
+    Important parameters:
+        path is a normalized repository-relative path.
+    Return value:
+        list[str] of zero or more categories.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Unknown paths return an empty list; categories are suffix/prefix based.
+    Trace:
+        _load_changed_files(), ChangedFile.categories.
+    """
     categories: list[str] = []
 
     if path.endswith(".py"):
@@ -584,10 +891,45 @@ def _is_executable_path(path: str) -> bool:
 
 
 def _is_excluded(config: ReviewConfig, path: str) -> bool:
+    """Return whether a path should be removed from review context.
+
+    Purpose:
+        Apply configured fnmatch-style excluded globs after changed files are
+        loaded.
+    Important parameters:
+        config.excluded_globs supplies patterns; path is repository-relative.
+    Return value:
+        True when any pattern matches, otherwise False.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Empty excluded_globs means no path is excluded.
+    Trace:
+        fnmatch.fnmatch(), build_review_context().
+    """
     return any(fnmatch.fnmatch(path, pattern) for pattern in config.excluded_globs)
 
 
 def _git_output(repo_root: Path, args: list[str]) -> str:
+    """Run a git command and return captured stdout.
+
+    Purpose:
+        Execute small git commands used for ref resolution, branch lookup, and
+        commit subjects.
+    Important parameters:
+        repo_root is subprocess cwd. args are appended after `git`.
+    Return value:
+        Completed stdout as text.
+    Side effects:
+        Runs subprocess.run(["git", *args], cwd=repo_root, check=True,
+        capture_output=True, text=True).
+    Failure or fallback behavior:
+        Non-zero git exit raises subprocess.CalledProcessError because
+        check=True.
+    Trace:
+        subprocess.run(), build_review_context(), _current_branch(),
+        _git_lines().
+    """
     completed = subprocess.run(
         ["git", *args],
         cwd=repo_root,

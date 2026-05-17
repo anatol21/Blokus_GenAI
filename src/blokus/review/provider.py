@@ -1,4 +1,14 @@
-"""OpenRouter-backed model provider for agentic review."""
+"""OpenRouter-backed provider client for agentic review specialists.
+
+This module loads the OpenRouter API key from the environment, builds
+chat-completions requests, sends specialist prompt text to the configured
+provider URL, retries selected transient failures, and extracts returned message
+content. Provider, transport, decoding, and response-shape problems are
+normalized into ProviderUnavailable so callers can surface review uncertainty.
+This module wraps an external API boundary; it does not prove provider
+availability, response stability, credential safety outside this code, or schema
+guarantees for the returned content.
+"""
 
 from __future__ import annotations
 
@@ -22,12 +32,49 @@ _OPENROUTER_REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_OPENROUTER_R
 
 
 class ProviderUnavailable(RuntimeError):
-    """Raised when the LLM provider cannot be used."""
+    """Raised when the OpenRouter provider cannot complete review work.
+
+    Purpose:
+        Normalize credential, request, retry, decoding, and response-shape
+        failures into one exception type for coordinator/specialist handling.
+    Important parameters:
+        Inherits RuntimeError message text from each raising branch.
+    Return value:
+        Exception type; no return value.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Raised by OpenRouterClient.from_env() and OpenRouterClient.complete()
+        instead of returning partial provider content.
+    Trace:
+        OpenRouterClient.from_env(), OpenRouterClient.complete(),
+        coordinator ProviderUnavailable handling.
+    """
 
 
 @dataclass(frozen=True)
 class OpenRouterClient:
-    """Thin OpenRouter client using the chat-completions API."""
+    """Small OpenRouter chat-completions client for agentic review.
+
+    Purpose:
+        Hold provider configuration and send specialist prompts to the
+        OpenRouter chat-completions endpoint.
+    Important parameters:
+        api_key is used for the Authorization header; base_url is normalized by
+        from_env(); timeout_seconds is passed to urlopen(); max_retries controls
+        retry attempts.
+    Return value:
+        complete() returns stripped message content from the first response
+        choice.
+    Side effects:
+        Sends HTTP POST requests through urllib.request.urlopen().
+    Failure or fallback behavior:
+        Raises ProviderUnavailable for missing credentials, invalid retry
+        budget, exhausted retries, invalid JSON, missing body, or unexpected
+        response shape.
+    Trace:
+        from_env(), complete(), Request, urlopen, ProviderUnavailable.
+    """
 
     api_key: str
     base_url: str
@@ -36,6 +83,23 @@ class OpenRouterClient:
 
     @classmethod
     def from_env(cls, config: ReviewConfig) -> "OpenRouterClient":
+        """Create an OpenRouterClient from environment and review config.
+
+        Purpose:
+            Load OPENROUTER_API_KEY and combine it with provider settings from
+            ReviewConfig.
+        Important parameters:
+            config.provider supplies base_url, timeout_seconds, and max_retries.
+        Return value:
+            OpenRouterClient with base_url stripped of trailing slashes.
+        Side effects:
+            Reads os.environ["OPENROUTER_API_KEY"] through os.environ.get().
+        Failure or fallback behavior:
+            Raises ProviderUnavailable when the environment variable is absent
+            or falsey.
+        Trace:
+            os.environ.get(), ReviewConfig.provider, ProviderUnavailable.
+        """
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise ProviderUnavailable("`OPENROUTER_API_KEY` is not set.")
@@ -47,6 +111,30 @@ class OpenRouterClient:
         )
 
     def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+        """Send one chat-completions request and return message content.
+
+        Purpose:
+            Submit specialist prompt text to OpenRouter and extract the first
+            choice's message content.
+        Important parameters:
+            model is serialized into the JSON payload; system_prompt and
+            user_prompt are sent as chat messages.
+        Return value:
+            Stripped string content from choices[0].message.content.
+        Side effects:
+            Builds a urllib Request, adds Content-Type, Authorization, and
+            Accept headers, sends HTTP requests with urlopen(), and may sleep
+            between retry attempts.
+        Failure or fallback behavior:
+            Negative max_retries raises immediately. Retryable HTTP errors,
+            URLError, TimeoutError, JSONDecodeError, and UnicodeDecodeError
+            retry until the attempt budget is exhausted. Non-retryable HTTP
+            errors, exhausted network retries, invalid final JSON, empty body,
+            and unexpected response shape raise ProviderUnavailable.
+        Trace:
+            Request(), request.add_header(), urlopen(timeout=timeout_seconds),
+            _is_retryable_http_error(), _sleep_before_retry(), json.loads().
+        """
         if self.max_retries < 0:
             raise ProviderUnavailable("OpenRouter `max_retries` must be greater than or equal to 0.")
         if self.max_retries > MAX_PROVIDER_RETRIES:
@@ -184,10 +272,41 @@ def _normalize_message_content(content: object) -> str:
 
 
 def _is_retryable_http_error(error: HTTPError) -> bool:
+    """Return whether an HTTPError status should be retried.
+
+    Purpose:
+        Centralize the retryable HTTP status allowlist.
+    Important parameters:
+        error is urllib.error.HTTPError.
+    Return value:
+        True for status codes 408, 425, 429, 500, 502, 503, or 504.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Any status code outside the set is treated as non-retryable by
+        complete().
+    Trace:
+        OpenRouterClient.complete() HTTPError branch.
+    """
     return error.code in {408, 425, 429, 500, 502, 503, 504}
 
 
 def _sleep_before_retry(attempt: int, error: HTTPError | None = None) -> None:
+    """Sleep before the next provider retry attempt.
+
+    Purpose:
+        Apply a small capped linear backoff between retryable provider failures.
+    Important parameters:
+        attempt is the 1-based attempt number passed by complete().
+    Return value:
+        None.
+    Side effects:
+        Calls time.sleep().
+    Failure or fallback behavior:
+        Sleep duration is min(0.25 * attempt, 1.0).
+    Trace:
+        time.sleep(), OpenRouterClient.complete() retry branches.
+    """
     time.sleep(_retry_delay_seconds(attempt, error))
 
 

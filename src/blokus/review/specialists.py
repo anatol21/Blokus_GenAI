@@ -1,4 +1,15 @@
-"""Prompt-driven specialist review orchestration."""
+"""Build and validate prompt-driven specialist review responses.
+
+This module builds prompt payloads for specialist LLM reviewers and sends
+bounded diff context to the configured provider. It loads common and
+specialist-specific prompt assets, constructs user prompts with changed files,
+commits, bias risks, and rendered diff text, then parses provider JSON
+responses. Accepted findings are normalized only when they reference changed
+files and overlap touched line spans; malformed, incomplete, or unrelated
+output is discarded or converted into UncertainRisk where the parser explicitly
+does so. The module is a prompt and response-validation layer, not proof that
+LLM findings are complete, deterministic, or automatically correct.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +39,26 @@ class _PromptContextBlocks:
 
 @dataclass(frozen=True)
 class SpecialistRunner:
-    """Invoke specialist prompts against the configured provider."""
+    """Invoke specialist prompt reviews through the configured provider.
+
+    Purpose:
+        Load common and specialist prompt assets, build a bounded user prompt,
+        call the provider, and parse the specialist's JSON response.
+    Important parameters:
+        config supplies prompt paths and model selection; provider is an
+        OpenRouterClient-compatible object used by provider.complete().
+    Return value:
+        run() returns SpecialistResponse.
+    Side effects:
+        May read prompt files through load_prompt() and submit prompt text plus
+        rendered diff context to provider.complete().
+    Failure or fallback behavior:
+        Missing prompt assets return a SpecialistResponse with an UncertainRisk;
+        empty file sets return a no-findings response without provider calls.
+    Trace:
+        _common_prompt, _specialist_prompt(), _build_user_prompt(),
+        OpenRouterClient.complete(), _parse_specialist_response().
+    """
 
     config: ReviewConfig
     provider: OpenRouterClient
@@ -50,6 +80,29 @@ class SpecialistRunner:
         files: tuple[ChangedFile, ...],
         rendered_diff: str,
     ) -> SpecialistResponse:
+        """Run one specialist review and normalize its response.
+
+        Purpose:
+            Combine shared and specialist prompts, build the user prompt, submit
+            it to the provider, and parse the provider response into review
+            data.
+        Important parameters:
+            specialist selects `review-{specialist}` prompt and model; context,
+            files, and rendered_diff define the scoped review input.
+        Return value:
+            SpecialistResponse containing accepted findings, uncertain risks,
+            and note text.
+        Side effects:
+            Reads prompt assets and calls provider.complete() with model,
+            system_prompt, and user_prompt.
+        Failure or fallback behavior:
+            No files returns a note-only response; FileNotFoundError while
+            loading prompts returns an UncertainRisk and skips
+            provider.complete().
+        Trace:
+            load_prompt(), config.model_for(), _build_user_prompt(),
+            provider.complete(), _parse_specialist_response().
+        """
         if not files:
             return SpecialistResponse(findings=(), note="No relevant files were available for this specialist.")
 
@@ -80,6 +133,24 @@ class SpecialistRunner:
         return _parse_specialist_response(raw_response, specialist, files)
 
     def _specialist_prompt(self, specialist: str) -> str:
+        """Load and cache a specialist-specific prompt asset.
+
+        Purpose:
+            Resolve `.github/prompts/review-{specialist}.md` through
+            load_prompt() once per SpecialistRunner instance.
+        Important parameters:
+            specialist is the prompt suffix used in `review-{specialist}`.
+        Return value:
+            Prompt text.
+        Side effects:
+            Reads from the configured prompt directory on cache miss and mutates
+            _specialist_prompt_cache.
+        Failure or fallback behavior:
+            Propagates FileNotFoundError to run(), which converts it into an
+            UncertainRisk response.
+        Trace:
+            load_prompt(), _specialist_prompt_cache, run().
+        """
         prompt = self._specialist_prompt_cache.get(specialist)
         if prompt is None:
             prompt = load_prompt(self.config, f"review-{specialist}")
@@ -93,6 +164,24 @@ def _build_user_prompt(
     files: tuple[ChangedFile, ...],
     rendered_diff: str,
 ) -> str:
+    """Build the user-facing prompt body for a specialist.
+
+    Purpose:
+        Combine file list, impact, branch, commit subjects, bias risks, response
+        JSON shape, finding limit instruction, and rendered diff text.
+    Important parameters:
+        specialist names the reviewer role; context supplies metadata and bias
+        risks; files scope prompt context; rendered_diff is the diff body.
+    Return value:
+        Stripped prompt string sent to provider.complete().
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Prompt context file/commit lists may contain omission notes produced by
+        _build_prompt_context_blocks().
+    Trace:
+        _build_prompt_context_blocks(), MAX_PROMPT_FILES, MAX_PROMPT_COMMITS.
+    """
     prompt_context = _build_prompt_context_blocks(context, files)
     bias_block = "\n".join(f"- {risk}" for risk in context.bias_risks)
 
@@ -151,6 +240,30 @@ def _parse_specialist_response(
     specialist: str,
     files: tuple[ChangedFile, ...],
 ) -> SpecialistResponse:
+    """Parse provider JSON into validated SpecialistResponse data.
+
+    Purpose:
+        Load JSON, accept only complete finding objects that match changed files
+        and touched line spans, preserve valid uncertain risks, and cap findings
+        to three.
+    Important parameters:
+        raw_response is provider text; specialist is used for source and
+        fallback stable IDs; files are the changed files this specialist was
+        asked to review.
+    Return value:
+        SpecialistResponse with tuple(findings[:3]), uncertain risks, and note.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Invalid JSON returns an empty response with an invalid-response note;
+        missing required finding keys, invalid line numbers, unmatched paths,
+        and non-overlapping line spans are discarded. Unmatched paths add one or
+        more UncertainRisk entries.
+    Trace:
+        _load_json_object(), _dict_list(), _index_changed_paths(),
+        _lookup_changed_file(), _int_value(), ChangedFile.touches_span(),
+        stable_finding_id().
+    """
     data = _load_json_object(raw_response)
     changed_paths = _index_changed_paths(files)
     required_keys = {
@@ -288,6 +401,22 @@ def _parse_specialist_response(
         note=str(data.get("note", "")),
     )
 def _int_value(value: object) -> int | None:
+    """Parse provider line-number values as integers.
+
+    Purpose:
+        Convert line_start and line_end values from JSON output into ints for
+        span validation.
+    Important parameters:
+        value is any JSON-derived object.
+    Return value:
+        int on successful conversion, otherwise None.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        TypeError and ValueError return None, causing the finding to be skipped.
+    Trace:
+        _parse_specialist_response(), ChangedFile.touches_span().
+    """
     try:
         return int(str(value))
     except (TypeError, ValueError):
@@ -296,7 +425,7 @@ def _int_value(value: object) -> int | None:
 
 def _parse_blocking_recommendation(value: object) -> bool:
     """Parse blocking_recommendation field safely.
-    
+
     Handles JSON booleans, strings ("true"/"false"), and defaults to False.
     """
     if isinstance(value, bool):
@@ -371,6 +500,24 @@ def _missing_prompt_response(*, prompt_name: str, specialist: str, shared: bool)
 
 
 def _load_json_object(raw_response: str) -> dict[str, object]:
+    """Load a JSON object from provider response text.
+
+    Purpose:
+        Parse the provider response directly, or recover the substring between
+        the first `{` and last `}` when extra text surrounds JSON.
+    Important parameters:
+        raw_response is the untrusted provider response string.
+    Return value:
+        Parsed JSON object or a fallback dict with empty findings, empty
+        uncertain_risks, and an invalid-response note.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        JSONDecodeError triggers substring recovery; failed recovery returns the
+        fallback invalid non-JSON response object.
+    Trace:
+        json.loads(), raw_response.find(), raw_response.rfind().
+    """
     try:
         payload = json.loads(raw_response)
         if isinstance(payload, dict):
@@ -395,6 +542,23 @@ def _invalid_specialist_payload(note: str) -> dict[str, object]:
 
 
 def prompt_context_was_truncated(context: ReviewContext, files: tuple[ChangedFile, ...]) -> bool:
+    """Report whether prompt metadata context would be truncated.
+
+    Purpose:
+        Let the coordinator decide whether to add a prompt-context truncation
+        risk for a specialist input.
+    Important parameters:
+        context supplies commit truncation and commits; files supplies changed
+        paths for the specialist.
+    Return value:
+        Boolean _PromptContextBlocks.truncated value.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Uses the same limits as _build_prompt_context_blocks().
+    Trace:
+        _build_prompt_context_blocks(), MAX_PROMPT_FILES, MAX_PROMPT_COMMITS.
+    """
     return _build_prompt_context_blocks(context, files).truncated
 
 
@@ -402,6 +566,25 @@ def _build_prompt_context_blocks(
     context: ReviewContext,
     files: tuple[ChangedFile, ...],
 ) -> _PromptContextBlocks:
+    """Build bounded file-list and commit blocks for specialist prompts.
+
+    Purpose:
+        Convert changed paths and commit subjects into bullet blocks with
+        omission notes when file or commit limits are exceeded.
+    Important parameters:
+        context supplies commits and commit_context_truncated; files supplies
+        ChangedFile.path values.
+    Return value:
+        _PromptContextBlocks with file_list, commit_block, and truncated flag.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Empty file or commit blocks become "- none"; truncated is true when
+        context commit context was truncated, commit count exceeds
+        MAX_PROMPT_COMMITS, or file count exceeds MAX_PROMPT_FILES.
+    Trace:
+        MAX_PROMPT_FILES, MAX_PROMPT_COMMITS, _bullet_block().
+    """
     file_count = len(files)
     file_paths = [changed_file.path for changed_file in files[:MAX_PROMPT_FILES]]
     truncated = context.commit_context_truncated or len(context.commits) > MAX_PROMPT_COMMITS
@@ -440,6 +623,25 @@ def _index_changed_paths(files: tuple[ChangedFile, ...]) -> dict[str, ChangedFil
 
 
 def _lookup_changed_file(path: str, changed_paths: dict[str, ChangedFile]) -> ChangedFile | None:
+    """Match a specialist-reported path to a changed file.
+
+    Purpose:
+        Normalize provider-reported file paths and reconcile direct, old-path,
+        and unambiguous suffix matches to ChangedFile objects.
+    Important parameters:
+        path is a provider-reported file path; changed_paths maps normalized new
+        and old paths to ChangedFile instances.
+    Return value:
+        Matching ChangedFile or None.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Empty normalized paths return None; ambiguous suffix matches return None
+        instead of guessing.
+    Trace:
+        _normalize_specialist_path(), _index_changed_paths(),
+        ChangedFile.old_path.
+    """
     normalized = _normalize_specialist_path(path)
     if not normalized:
         return None
@@ -460,6 +662,23 @@ def _lookup_changed_file(path: str, changed_paths: dict[str, ChangedFile]) -> Ch
 
 
 def _normalize_specialist_path(path: object) -> str:
+    """Normalize a provider-reported path for matching.
+
+    Purpose:
+        Convert path-like provider output into a stable POSIX-style path key.
+    Important parameters:
+        path may be None or any object convertible to str.
+    Return value:
+        Normalized string or "" when no usable path remains.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        None, empty strings, and "." normalize to ""; leading "./" prefixes are
+        removed; backslashes become slashes; surrounding backticks/quotes are
+        stripped.
+    Trace:
+        PurePosixPath, _lookup_changed_file(), _index_changed_paths().
+    """
     if path is None:
         return ""
     normalized = str(path).strip().strip("`'\"").replace("\\", "/")

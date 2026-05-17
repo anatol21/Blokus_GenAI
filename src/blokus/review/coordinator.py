@@ -1,4 +1,13 @@
-"""Coordinator for agentic PR review."""
+"""Coordinate one end-to-end agentic PR review run.
+
+This module builds diff context, runs deterministic static analysis,
+conditionally invokes LLM specialists, merges findings and uncertain risks, and
+renders the final Markdown review artifact. It owns the review-level flow for
+provider availability, forked pull requests, truncation risks, finding
+deduplication/capping, summary posture, and final verdict selection. The result
+is a bounded review artifact assembled from local context and optional provider
+responses, not an exhaustive or security-authoritative assessment.
+"""
 
 from __future__ import annotations
 
@@ -38,7 +47,26 @@ _SPECIALIST_BLOCKING_DEGRADING_RISKS = {
 
 @dataclass(frozen=True)
 class ReviewRun:
-    """Final bundled review outputs."""
+    """Final bundle returned by one coordinator run.
+
+    Purpose:
+        Keep the diff context, structured review result, rendered Markdown, and
+        static-analysis report together for callers.
+    Important parameters:
+        context is the ReviewContext used for review; result is the normalized
+        ReviewResult; markdown is rendered by render_review_markdown();
+        static_report is the StaticAnalysisReport produced or synthesized.
+    Return value:
+        Dataclass value returned by ReviewCoordinator.run().
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        May contain fallback context and a not_run static report when diff
+        context construction fails.
+    Trace:
+        ReviewCoordinator.run(), ReviewContext, ReviewResult,
+        StaticAnalysisReport.
+    """
 
     context: ReviewContext
     result: ReviewResult
@@ -68,7 +96,26 @@ class _RenderedBlockCache:
 
 
 class ReviewCoordinator:
-    """Run the end-to-end agentic PR review flow."""
+    """Coordinate diff, static, specialist, verdict, and rendering stages.
+
+    Purpose:
+        Orchestrate the agentic PR review pipeline from ReviewConfig to
+        ReviewRun.
+    Important parameters:
+        config is validated at construction and passed to StaticAnalyzer,
+        OpenRouterClient, SpecialistRunner, and renderer-related helpers.
+    Return value:
+        run() returns ReviewRun.
+    Side effects:
+        May call git-backed diff loading, static-analysis subprocesses,
+        provider-backed specialist requests, and Markdown rendering.
+    Failure or fallback behavior:
+        Diff-context failures create fallback context; unavailable providers and
+        forked PRs become uncertain risks.
+    Trace:
+        build_review_context(), StaticAnalyzer, OpenRouterClient.from_env(),
+        SpecialistRunner, render_review_markdown().
+    """
 
     def __init__(self, config: ReviewConfig) -> None:
         self.config = config
@@ -83,6 +130,31 @@ class ReviewCoordinator:
         head_ref: str | None = None,
         pr_number: int | None = None,
     ) -> ReviewRun:
+        """Run one complete agentic PR review.
+
+        Purpose:
+            Build review context, run static analysis, conditionally run
+            specialists, merge risks, dedupe/cap findings, compute summary and
+            verdict, and render Markdown.
+        Important parameters:
+            event_payload, base_ref, head_ref, and pr_number are forwarded to
+            build_review_context() or fallback context construction.
+        Return value:
+            ReviewRun containing context, ReviewResult, Markdown, and static
+            report.
+        Side effects:
+            Calls build_review_context(), StaticAnalyzer.analyze(),
+            OpenRouterClient.from_env(), SpecialistRunner, and
+            render_review_markdown().
+        Failure or fallback behavior:
+            Catches subprocess.CalledProcessError, KeyError, TypeError, and
+            ValueError from context construction; records provider and fork
+            skips as UncertainRisk values.
+        Trace:
+            _fallback_review_context(), _run_specialists(),
+            _append_diff_truncation_risk(), _dedupe_and_limit(),
+            _build_summary(), _build_verdict().
+        """
         try:
             context = build_review_context(
                 self.config,
@@ -196,6 +268,30 @@ class ReviewCoordinator:
         uncertain_risks: list[UncertainRisk],
         performance_requested: bool,
     ) -> tuple[list[Finding], list[UncertainRisk], bool]:
+        """Run applicable specialist reviewers and merge their responses.
+
+        Purpose:
+            Build rendered diff bundles, choose correctness/tests/performance
+            specialist specs, run provider calls concurrently, and merge
+            results.
+        Important parameters:
+            specialist_runner executes specialists; context supplies changed
+            files; findings and uncertain_risks are mutable accumulators;
+            performance_requested controls the performance specialist.
+        Return value:
+            Updated findings, updated uncertain_risks, and whether rendered diff
+            context was truncated.
+        Side effects:
+            Submits work to ThreadPoolExecutor and mutates the supplied lists.
+        Failure or fallback behavior:
+            Per-specialist failures are converted with
+            _specialist_failure_response(); prompt context truncation appends an
+            uncertain risk once.
+        Trace:
+            ThreadPoolExecutor, _RenderedBlockCache, _render_diff_bundle(),
+            prompt_context_was_truncated(),
+            _append_prompt_context_truncation_risk().
+        """
         reviewable_changed_files = tuple(changed_file for changed_file in context.changed_files if changed_file.patch.strip())
         reviewable_executable_files = tuple(
             changed_file for changed_file in context.executable_files if changed_file.patch.strip()
@@ -254,12 +350,48 @@ class ReviewCoordinator:
         files: tuple[ChangedFile, ...],
         rendered_diff: str,
     ) -> "SpecialistResponse":
+        """Run one specialist and convert exceptions into uncertainty.
+
+        Purpose:
+            Wrap SpecialistRunner.run() for one specialist request.
+        Important parameters:
+            specialist names the prompt/model route; files and rendered_diff
+            define the scoped review input.
+        Return value:
+            SpecialistResponse from the runner or _specialist_failure_response().
+        Side effects:
+            May call the configured provider through SpecialistRunner.
+        Failure or fallback behavior:
+            Any exception is caught and represented as an uncertain risk
+            response.
+        Trace:
+            SpecialistRunner.run(), _specialist_failure_response().
+        """
         try:
             return specialist_runner.run(specialist, context, files, rendered_diff)
         except Exception as exc:
             return _specialist_failure_response(specialist, exc)
 
     def _dedupe_and_limit(self, findings: list[Finding]) -> list[Finding]:
+        """Validate, deduplicate, rank, and cap review findings.
+
+        Purpose:
+            Keep only schema-valid findings, retain the highest-ranked
+            duplicate, sort by rank, and enforce config.max_findings.
+        Important parameters:
+            findings is the accumulated list from static and specialist
+            reviewers.
+        Return value:
+            Ordered list of at most config.max_findings Finding objects.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Invalid findings are dropped; lower-ranked duplicates are replaced
+            by stronger findings with the same dedupe key.
+        Trace:
+            _is_valid_finding(), Finding.dedupe_key(), Finding.rank(),
+            ALLOWED_FINDING_CATEGORIES.
+        """
         deduped: dict[tuple[str, str, int, str], Finding] = {}
         for finding in findings:
             if not _is_valid_finding(finding):
@@ -321,6 +453,27 @@ class ReviewCoordinator:
         provider_available: bool,
         performance_review_covered: bool,
     ) -> ReviewSummary:
+        """Build the top-level review posture summary.
+
+        Purpose:
+            Combine context impact, findings, static posture, performance
+            request, and provider availability into ReviewSummary.
+        Important parameters:
+            context supplies impact and changed files; findings drive risk,
+            test, and performance posture; static_report supplies
+            static_analysis_posture.
+        Return value:
+            ReviewSummary.
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            Test posture falls back to review_recommended for source/schema/
+            fixture changes without test findings; performance posture reflects
+            whether a requested provider-backed review was available.
+        Trace:
+            ReviewSummary, StaticAnalysisReport.posture, Finding.category,
+            Finding.blocking_recommendation.
+        """
         overall_risk = context.impact
         if findings:
             overall_risk = max(
@@ -354,6 +507,25 @@ class ReviewCoordinator:
         )
 
     def _build_verdict(self, findings: list[Finding], uncertain_risks: list[UncertainRisk]) -> str:
+        """Compute the final review verdict from findings and uncertainty.
+
+        Purpose:
+            Return NEEDS CHANGES for blocking findings, DISCUSS for blocking
+            uncertainty, otherwise LGTM.
+        Important parameters:
+            findings are already deduped/capped; uncertain_risks are accumulated
+            from diff, static, provider, and specialist stages.
+        Return value:
+            "NEEDS CHANGES", "DISCUSS", or "LGTM".
+        Side effects:
+            None.
+        Failure or fallback behavior:
+            _requires_discussion() exempts configured non-blocking uncertain
+            risks and some OpenRouter specialist failures.
+        Trace:
+            _requires_discussion(), _NON_BLOCKING_UNCERTAIN_RISKS,
+            Finding.blocking_recommendation.
+        """
         if any(finding.blocking_recommendation for finding in findings):
             return "NEEDS CHANGES"
         if any(_requires_discussion(risk) for risk in uncertain_risks):
@@ -499,6 +671,23 @@ def _finalize_rendered_bundle(parts: list[str], total_length: int, truncated: bo
 
 
 def _specialist_failure_response(specialist: str, error: Exception) -> "SpecialistResponse":
+    """Convert a specialist exception into a SpecialistResponse.
+
+    Purpose:
+        Keep one failed specialist from aborting the whole coordinator run.
+    Important parameters:
+        specialist names the failed specialist; error is serialized into
+        reason_uncertain.
+    Return value:
+        SpecialistResponse with no findings, one UncertainRisk, and empty note.
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        The original exception is not re-raised by this helper.
+    Trace:
+        _run_specialist(), _run_specialists(), SpecialistResponse,
+        UncertainRisk.
+    """
     return SpecialistResponse(
         findings=(),
         uncertain_risks=(
@@ -541,6 +730,24 @@ def _truncate_text(text: str, limit: int, marker: str) -> str:
 
 
 def _append_diff_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
+    """Append a de-duplicated risk for truncated diff context.
+
+    Purpose:
+        Record that stored patches or rendered specialist bundles exceeded size
+        limits and may omit hunks.
+    Important parameters:
+        uncertain_risks is the mutable accumulator list.
+    Return value:
+        None.
+    Side effects:
+        May append one UncertainRisk.
+    Failure or fallback behavior:
+        Does not append if a risk with the same risk text already exists.
+    Trace:
+        MAX_RENDERED_DIFF_CHARS, MAX_RENDERED_PATCH_CHARS,
+        _RENDERED_BUNDLE_TRUNCATION_MARKER,
+        _RENDERED_PATCH_TRUNCATION_MARKER.
+    """
     risk = UncertainRisk(
         risk="Diff context was truncated for scale.",
         reason_uncertain="One or more stored patches or rendered specialist diff bundles exceeded the internal size limits, so omitted hunks may not have been reviewed in full.",
@@ -569,6 +776,22 @@ def _append_diff_analysis_truncation_risk(uncertain_risks: list[UncertainRisk]) 
 
 
 def _append_prompt_context_truncation_risk(uncertain_risks: list[UncertainRisk]) -> None:
+    """Append a de-duplicated risk for truncated prompt metadata context.
+
+    Purpose:
+        Record that specialist prompts capped commit subjects or changed-path
+        lists.
+    Important parameters:
+        uncertain_risks is the mutable accumulator list.
+    Return value:
+        None.
+    Side effects:
+        May append one UncertainRisk.
+    Failure or fallback behavior:
+        Does not append if a risk with the same risk text already exists.
+    Trace:
+        prompt_context_was_truncated(), SpecialistRunner prompt context limits.
+    """
     risk = UncertainRisk(
         risk="Commit or file-list context was truncated for scale.",
         reason_uncertain="The specialist prompts capped commit subjects or changed-path lists to stay within a bounded context window, so some metadata context was omitted.",
@@ -636,6 +859,24 @@ def _fallback_review_context(
     head_ref: str | None,
     pr_number: int | None,
 ) -> ReviewContext:
+    """Build minimal context when diff-backed context construction fails.
+
+    Purpose:
+        Preserve enough PR/ref metadata to render a review artifact after local
+        refs or diff loading fail.
+    Important parameters:
+        event_payload, base_ref, head_ref, and pr_number are used to recover
+        payload, refs, and same_repo when possible.
+    Return value:
+        ReviewContext with no commits, changed files, executable files, or raw
+        diff; impact is "moderate" and branch_name is "unavailable".
+    Side effects:
+        None.
+    Failure or fallback behavior:
+        Falls back to origin/main and HEAD when payload/ref values are absent.
+    Trace:
+        _fallback_payload(), _fallback_same_repo(), ReviewContext.
+    """
     payload = _fallback_payload(event_payload, base_ref, head_ref, pr_number)
     return ReviewContext(
         pr=payload,
