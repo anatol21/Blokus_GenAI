@@ -26,7 +26,7 @@ class GuiTests(unittest.TestCase):
                     controller_strategies={"blue": "human"},
                     current_player="blue",
                 ),
-            ) as new_game:
+            ):
                 gui.handle_restart()
 
         ask_ok_cancel.assert_called_once()

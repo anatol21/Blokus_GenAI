@@ -8,9 +8,7 @@ import unittest
 
 from blokus.engine import (
     apply_move,
-    compute_scores,
     get_occupied_cells,
-    list_legal_moves,
     new_game,
 )
 from blokus.models import GameState, Move

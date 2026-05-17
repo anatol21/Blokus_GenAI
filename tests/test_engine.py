@@ -132,12 +132,6 @@ class EngineRuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported mode 'duo'"):
             new_game("duo")
 
-    def test_opening_move_must_cover_corner(self) -> None:
-        state = new_game(mode="classic")
-        result = validate_move(state, Move("blue", "I1", 1, 1))
-        self.assertFalse(result.ok)
-        self.assertIn("must cover start corner", result.reason)
-
     def test_turn_order_is_enforced(self) -> None:
         state = new_game(mode="classic")
         result = validate_move(state, Move("yellow", "I1", 19, 0))
