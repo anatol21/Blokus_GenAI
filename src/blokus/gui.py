@@ -67,8 +67,10 @@ MODE_CONTROL_STYLE = {
         "label": "Classic",
     },
     "duo": {
-        "fill_disabled": "#bab5c9",
-        "outline_disabled": "#7c7690",
+        "fill_active": "#6bb5ff",
+        "fill_idle": "#9cc7f0",
+        "outline_active": "#24488e",
+        "outline_idle": "#4d73b6",
         "label": "Duo",
     },
 }
@@ -351,7 +353,7 @@ class BlokusGui:
             (x0 + x1) / 2,
             (y0 + y1) / 2,
             text=style["label"],
-            fill="#243f85" if is_classic else "#58536a",
+            fill="#243f85" if is_classic else "#243f85",
             font=self.font_body,
         )
 
@@ -652,7 +654,7 @@ class BlokusGui:
             self.active_panel = None
             self.status_text = "Classic mode is active."
         elif button == "duo":
-            self.status_text = "Duo mode is disabled in this phase."
+            self.status_text = "Duo mode is active."
         elif button == "settings":
             self.active_panel = "settings"
             self.show_settings_dialog()
@@ -957,11 +959,12 @@ class BlokusGui:
         self.redraw()
 
     def handle_restart(self) -> None:
-        """Confirm and reset the current Classic game session."""
+        """Confirm and reset the current game session using the active mode."""
 
+        mode_title = "Classic" if self.mode == "classic" else "Duo"
         confirmed = messagebox.askokcancel(
-            title="Restart Classic Game",
-            message="Restart the current Classic game? This will discard the current board state.",
+            title=f"Restart {mode_title} Game",
+            message=f"Restart the current {mode_title} game? This will discard the current board state.",
             parent=self.root,
         )
         self.active_panel = None
@@ -969,12 +972,12 @@ class BlokusGui:
             self.status_text = "Restart cancelled."
             return
         self.state = new_game(
-            mode="classic",
+            mode=self.mode,
             controllers=dict(self.state.controller_types),
             strategies=dict(self.state.controller_strategies),
         )
         self.drag_state = None
-        self.status_text = "Started a fresh Classic game."
+        self.status_text = f"Started a fresh {mode_title} game."
         self.advance_automatic_turns()
 
     def button_at(self, x: int, y: int) -> str | None:

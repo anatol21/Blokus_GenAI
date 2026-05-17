@@ -130,10 +130,10 @@ class CliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertIn("expects 4 controller types", completed.stdout)
 
-    def test_new_command_rejects_unsupported_mode(self) -> None:
-        completed = self.run_cli("new", "--mode", "duo")
+    def test_new_command_rejects_unknown_mode(self) -> None:
+        completed = self.run_cli("new", "--mode", "not-a-mode")
         self.assertEqual(completed.returncode, 1)
-        self.assertIn("Unsupported mode 'duo'", completed.stdout)
+        self.assertIn("Unsupported mode 'not-a-mode'", completed.stdout)
 
     def test_new_command_rejects_unknown_controller_type(self) -> None:
         completed = self.run_cli("new", "--players", "human,human,human,alien")
