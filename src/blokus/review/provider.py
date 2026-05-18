@@ -1,4 +1,11 @@
-"""OpenRouter-backed model provider for agentic review."""
+"""OpenRouter-backed model provider for agentic review.
+
+This module builds OpenRouter chat-completions requests for specialist
+review prompts. It loads the bearer token from ``OPENROUTER_API_KEY`` and
+uses provider settings from ``ReviewConfig`` for the base URL, timeout, and
+retry budget. It bounds response reads, normalizes supported message-content
+shapes, and maps provider failures to ``ProviderUnavailable``.
+"""
 
 from __future__ import annotations
 
@@ -22,12 +29,25 @@ _OPENROUTER_REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_OPENROUTER_R
 
 
 class ProviderUnavailable(RuntimeError):
-    """Raised when the LLM provider cannot be used."""
+    """Raised when the configured LLM provider cannot complete a request."""
 
 
 @dataclass(frozen=True)
 class OpenRouterClient:
-    """Thin OpenRouter client using the chat-completions API."""
+    """Thin OpenRouter client using the chat-completions API.
+
+    Attributes:
+        api_key: Bearer token sent in the OpenRouter ``Authorization``
+            header.
+        base_url: OpenRouter API base URL without a trailing slash.
+        timeout_seconds: Timeout passed to ``urlopen`` for each request.
+        max_retries: Number of retries after the first request attempt.
+
+    Warning:
+        The dataclass stores ``api_key`` as a normal field, so the generated
+        representation includes the token unless the class definition changes.
+        Avoid logging or exposing client instances directly.
+    """
 
     api_key: str
     base_url: str
@@ -36,6 +56,20 @@ class OpenRouterClient:
 
     @classmethod
     def from_env(cls, config: ReviewConfig) -> "OpenRouterClient":
+        """Create a client from review config and ``OPENROUTER_API_KEY``.
+
+        Args:
+            config: Review configuration containing provider base URL,
+                timeout, and retry settings.
+
+        Returns:
+            An ``OpenRouterClient`` configured for the provider block in
+            ``config``.
+
+        Raises:
+            ProviderUnavailable: If ``OPENROUTER_API_KEY`` is not present in
+                the environment.
+        """
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise ProviderUnavailable("`OPENROUTER_API_KEY` is not set.")
@@ -47,6 +81,24 @@ class OpenRouterClient:
         )
 
     def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+        """Request one chat-completion message from OpenRouter.
+
+        Args:
+            model: OpenRouter model identifier to include in the request
+                payload.
+            system_prompt: System message content sent before the user prompt.
+            user_prompt: User message content sent to the model.
+
+        Returns:
+            The first response choice's normalized message content.
+
+        Raises:
+            ProviderUnavailable: If ``max_retries`` is outside the allowed
+                range, the request fails beyond the retry budget, a
+                non-retryable HTTP error is returned, the response cannot be
+                decoded as JSON, or the JSON body does not contain usable
+                message content.
+        """
         if self.max_retries < 0:
             raise ProviderUnavailable("OpenRouter `max_retries` must be greater than or equal to 0.")
         if self.max_retries > MAX_PROVIDER_RETRIES:
@@ -121,6 +173,19 @@ class OpenRouterClient:
 
 
 def _read_bounded_response(response: object) -> bytes:
+    """Read a response body without exceeding the configured byte limit.
+
+    Args:
+        response: Object returned by ``urlopen``.
+
+    Returns:
+        Response body bytes.
+
+    Raises:
+        ProviderUnavailable: If the response declares or returns a body larger
+            than the safe size limit, cannot be read, or returns a non-binary
+            body.
+    """
     content_length = _content_length_header(response)
     if content_length is not None and content_length > _MAX_OPENROUTER_RESPONSE_BYTES:
         raise ProviderUnavailable(
@@ -142,6 +207,15 @@ def _read_bounded_response(response: object) -> bytes:
 
 
 def _content_length_header(response: object) -> int | None:
+    """Parse a non-negative ``Content-Length`` header when present.
+
+    Args:
+        response: Object that may expose mapping-like ``headers``.
+
+    Returns:
+        Parsed non-negative content length, or ``None`` when the header is
+        absent, unsupported, negative, or invalid.
+    """
     headers = getattr(response, "headers", None)
     if headers is None or not hasattr(headers, "get"):
         return None
@@ -159,6 +233,19 @@ def _content_length_header(response: object) -> int | None:
 
 
 def _normalize_message_content(content: object) -> str:
+    """Normalize supported OpenRouter message-content shapes.
+
+    Args:
+        content: Message ``content`` value from the first response choice.
+
+    Returns:
+        Stripped text content. Lists are reduced to string items and dict
+        items with string ``text`` values.
+
+    Raises:
+        ProviderUnavailable: If the content type is unsupported or a list does
+            not contain usable text.
+    """
     if isinstance(content, str):
         return content.strip()
 
@@ -184,14 +271,39 @@ def _normalize_message_content(content: object) -> str:
 
 
 def _is_retryable_http_error(error: HTTPError) -> bool:
+    """Return whether an HTTP error should consume retry budget.
+
+    Args:
+        error: HTTP error raised while sending an OpenRouter request.
+
+    Returns:
+        ``True`` for HTTP status codes that this module retries, otherwise
+        ``False``.
+    """
     return error.code in {408, 425, 429, 500, 502, 503, 504}
 
 
 def _sleep_before_retry(attempt: int, error: HTTPError | None = None) -> None:
+    """Sleep for the retry delay selected for the failed attempt.
+
+    Args:
+        attempt: One-based attempt number that just failed.
+        error: Optional HTTP error used to select rate-limit-aware delay.
+    """
     time.sleep(_retry_delay_seconds(attempt, error))
 
 
 def _retry_delay_seconds(attempt: int, error: HTTPError | None = None) -> float:
+    """Return the delay before retrying an OpenRouter request.
+
+    Args:
+        attempt: One-based attempt number that just failed.
+        error: Optional HTTP error whose status and headers may affect delay.
+
+    Returns:
+        Delay in seconds. HTTP 429 responses may use ``Retry-After`` when it
+        is present and parseable.
+    """
     if error is not None and error.code == 429:
         retry_after = _retry_after_seconds(getattr(error, "headers", None))
         if retry_after is not None:
@@ -201,6 +313,15 @@ def _retry_delay_seconds(attempt: int, error: HTTPError | None = None) -> float:
 
 
 def _retry_after_seconds(headers: object) -> float | None:
+    """Parse a ``Retry-After`` header into seconds.
+
+    Args:
+        headers: Mapping-like header object that may contain ``Retry-After``.
+
+    Returns:
+        Non-negative delay in seconds, or ``None`` when the header is absent
+        or cannot be parsed.
+    """
     if headers is None or not hasattr(headers, "get"):
         return None
 
