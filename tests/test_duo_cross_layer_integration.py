@@ -1,8 +1,39 @@
+"""Minimal Duo cross-layer integration coverage.
+
+This module verifies that Duo mode works across the command-line entry point,
+engine-backed legal move listing, evaluator scenario replay, and GUI mode
+wiring. It intentionally avoids duplicating the Duo serialization and import
+test suites, and it does not depend on shared scenario fixtures for evaluator
+coverage. The GUI test uses fakes to validate mode wiring without starting a
+real Tk mainloop.
+"""
+
+# Maintenance risk register:
+# High: subprocess environment handling.
+#   Evidence: run_cli shells out to `python -m blokus` with an augmented
+#   PYTHONPATH.
+#   Failure scenario: replacing the full environment can hide interpreter or
+#   platform settings needed by CI or developer machines.
+#   Recommended action: preserve os.environ and prepend the repo src path.
+#   Suggested test: keep CLI integration assertions running through run_cli.
+#
+# Medium: fake Tk objects can drift from the GUI redraw contract.
+#   Evidence: test_gui_switch_mode_duo_uses_duo_state_and_board_asset_without_tk_mainloop
+#   calls switch_mode on a __new__ instance with FakeRoot and FakeCanvas.
+#   Failure scenario: switch_mode/redraw starts requiring new canvas/root calls
+#   and the fake no longer proves the intended non-mainloop boundary.
+#   Recommended action: update the fakes only for calls needed by switch_mode
+#   and keep the no-mainloop assertion.
+#   Suggested test: continue asserting board_duo is rendered and FakeRoot has no
+#   mainloop attribute.
+
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import Any
 import unittest
 from unittest.mock import patch
 
@@ -16,48 +47,132 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run the Blokus CLI in a subprocess from the repository root.
+
+    Args:
+        *args: Command-line arguments passed after ``python -m blokus``.
+
+    Returns:
+        The completed subprocess with captured stdout and stderr.
+
+    Warning:
+        This helper preserves the caller's environment and prepends ``src`` to
+        ``PYTHONPATH`` so subprocess behavior stays close to CI and local shells.
+    """
+
+    env = os.environ.copy()
+    src_path = str(REPO_ROOT / "src")
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        src_path
+        if not existing_pythonpath
+        else src_path + os.pathsep + existing_pythonpath
+    )
     return subprocess.run(
         [sys.executable, "-m", "blokus", *args],
         cwd=REPO_ROOT,
-        env={"PYTHONPATH": str(REPO_ROOT / "src")},
+        env=env,
         capture_output=True,
         text=True,
         check=False,
     )
 
 
-def load_json(path: Path) -> dict[str, object]:
+def load_json(path: Path) -> dict[str, Any]:
+    """Load a JSON object from disk for focused test assertions.
+
+    Args:
+        path: Path to a JSON file expected to contain an object.
+
+    Returns:
+        The decoded JSON object.
+    """
+
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 class FakeRoot:
+    """Small Tk root stand-in that records title updates.
+
+    Attributes:
+        titles: Window titles passed to ``title``.
+
+    Warning:
+        This fake intentionally has no ``mainloop`` attribute so the GUI test
+        can prove ``switch_mode`` does not start a real Tk loop.
+    """
+
     def __init__(self) -> None:
         self.titles: list[str] = []
 
     def title(self, value: str) -> None:
+        """Record a title assigned by the GUI.
+
+        Args:
+            value: Window title text.
+        """
+
         self.titles.append(value)
 
 
 class FakeCanvas:
+    """Small Canvas stand-in that records redraw calls used by switch_mode.
+
+    Attributes:
+        deleted: Canvas tags passed to ``delete``.
+        images: Calls made to ``create_image`` with positional and keyword
+            arguments.
+        texts: Calls made to ``create_text`` with positional and keyword
+            arguments.
+    """
+
     def __init__(self) -> None:
         self.deleted: list[str] = []
-        self.images: list[dict[str, object]] = []
-        self.texts: list[dict[str, object]] = []
+        self.images: list[dict[str, Any]] = []
+        self.texts: list[dict[str, Any]] = []
 
     def delete(self, tag: str) -> None:
+        """Record a canvas delete call.
+
+        Args:
+            tag: Canvas tag or item id requested for deletion.
+        """
+
         self.deleted.append(tag)
 
     def create_image(self, *args: object, **kwargs: object) -> int:
+        """Record an image draw call.
+
+        Args:
+            *args: Positional canvas arguments.
+            **kwargs: Keyword canvas arguments.
+
+        Returns:
+            A stable fake canvas item id.
+        """
+
         self.images.append({"args": args, "kwargs": kwargs})
         return len(self.images)
 
     def create_text(self, *args: object, **kwargs: object) -> int:
+        """Record a text draw call.
+
+        Args:
+            *args: Positional canvas arguments.
+            **kwargs: Keyword canvas arguments.
+
+        Returns:
+            A stable fake canvas item id.
+        """
+
         self.texts.append({"args": args, "kwargs": kwargs})
         return len(self.texts)
 
 
 class DuoCrossLayerIntegrationTests(unittest.TestCase):
+    """Cross-layer checks for Duo behavior that spans multiple modules."""
+
     def test_cli_duo_new_apply_show_and_invalid_apply_lifecycle(self) -> None:
         """CLI commands interoperate across Duo new/apply/show/failed apply."""
 
@@ -170,6 +285,8 @@ class DuoCrossLayerIntegrationTests(unittest.TestCase):
             self.assertTrue(cli_moves)
 
     def test_gui_switch_mode_duo_uses_duo_state_and_board_asset_without_tk_mainloop(self) -> None:
+        """GUI mode switching wires Duo state and assets without a Tk mainloop."""
+
         sidebars_asset = object()
         classic_asset = object()
         duo_asset = object()
