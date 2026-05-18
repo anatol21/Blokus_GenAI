@@ -591,10 +591,11 @@ class SerializationEdgeCaseTests(unittest.TestCase):
             with state_path.open("w", encoding="utf-8") as f:
                 json.dump(state.to_dict(), f, indent=2)
 
-            # Attempt an illegal move with --output
+            # Attempt an illegal move with --output (wrong player = out of turn)
             result = run_cli(
                 "apply", "--state", str(state_path),
-                "--piece", "I1", "--x", "5", "--y", "5",
+                "--player", "yellow",
+                "--piece", "I1", "--x", "19", "--y", "0",
                 "--output", str(output_path),
             )
             self.assertEqual(result.returncode, 1)

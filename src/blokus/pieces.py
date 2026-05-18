@@ -164,4 +164,46 @@ def absolute_cells(
 
     ox, oy = origin
     return tuple(sorted((ox + dx, oy + dy) for dx, dy in transformed))
-    
+
+
+def reference_cell(piece_id: str, rotation: int, flipped: bool) -> Coordinate:
+    """Return the first occupied cell offset for the given piece transform.
+
+    The CLI translation layer uses this to convert between bounding-box
+    origin coordinates (used internally by the engine) and human-friendly
+    coordinates that always point to an actual occupied cell of the piece.
+
+    Cells are sorted by normalize_cells (lexicographic on (x, y)), so
+    index 0 is the top-left-most occupied cell of the transformed piece.
+    """
+
+    transformed = apply_transform(PIECES[piece_id].cells, rotation=rotation, flipped=flipped)
+    return transformed[0]
+
+
+def start_corner_cell(
+    piece_id: str,
+    rotation: int,
+    flipped: bool,
+    corner: Coordinate,
+    board_size: int,
+) -> Coordinate | None:
+    """Return the cell offset that lands on the given start corner.
+
+    For first-move translation, finds which cell in the transformed piece
+    would cover the mandatory start corner when the piece is placed at a
+    valid board position.  Returns None if no valid placement exists for
+    this transform at the corner.
+    """
+
+    transformed = apply_transform(PIECES[piece_id].cells, rotation=rotation, flipped=flipped)
+    cx, cy = corner
+    for dx, dy in transformed:
+        origin_x = cx - dx
+        origin_y = cy - dy
+        if all(
+            0 <= origin_x + cell_x < board_size and 0 <= origin_y + cell_y < board_size
+            for cell_x, cell_y in transformed
+        ):
+            return (dx, dy)
+    return None

@@ -7,9 +7,10 @@ from pathlib import Path
 import sys
 
 from blokus.config import get_mode_config
-from blokus.engine import apply_move, list_legal_moves, new_game, pass_turn, validate_loaded_state, validate_move
+from blokus.engine import apply_move, is_first_move, list_legal_moves, new_game, pass_turn, validate_loaded_state, validate_move
 from blokus.evaluate import main as evaluate_main
 from blokus.models import GameState, Move
+from blokus.pieces import reference_cell, start_corner_cell
 from blokus.players import choose_move
 from blokus.render import render_state
 
@@ -51,14 +52,65 @@ def _parse_controllers(mode: str, value: str | None) -> dict[str, str]:
     return {player: controller for player, controller in zip(players, parsed)}
 
 
-def _move_from_args(state: GameState, args: Namespace) -> Move:
-    """Build a move object from parsed CLI arguments."""
+def _engine_to_human(state: GameState, move: Move) -> tuple[int, int]:
+    """Translate engine bounding-box coordinates to human-friendly coordinates.
 
+    For first moves the displayed coordinate is the player's start corner.
+    For subsequent moves it is the first occupied cell of the transformed piece.
+    """
+
+    if is_first_move(state, move.player):
+        return state.start_corners[move.player]
+    ref_dx, ref_dy = reference_cell(move.piece, move.rotation, move.flipped)
+    return (move.x + ref_dx, move.y + ref_dy)
+
+
+def _human_to_engine(
+    state: GameState,
+    player: str,
+    piece: str,
+    human_x: int,
+    human_y: int,
+    rotation: int,
+    flipped: bool,
+) -> tuple[int, int]:
+    """Translate human-friendly coordinates to engine bounding-box coordinates.
+
+    For first moves the coordinate is interpreted as the start corner.
+    For subsequent moves it is the first occupied cell of the transformed piece.
+    """
+
+    if is_first_move(state, player):
+        corner = state.start_corners[player]
+        cell = start_corner_cell(piece, rotation, flipped, corner, state.board_size)
+        if cell is None:
+            raise ValueError(
+                f"Piece '{piece}' with rotation={rotation} flipped={flipped} "
+                f"cannot cover start corner {corner} within the board."
+            )
+        dx, dy = cell
+        return (corner[0] - dx, corner[1] - dy)
+    ref_dx, ref_dy = reference_cell(piece, rotation, flipped)
+    return (human_x - ref_dx, human_y - ref_dy)
+
+
+def _move_from_args(state: GameState, args: Namespace) -> Move:
+    """Build a move object from parsed CLI arguments.
+
+    Translates human-friendly coordinates to engine bounding-box
+    coordinates before constructing the Move.
+    """
+
+    player = args.player or state.current_player
+    engine_x, engine_y = _human_to_engine(
+        state, player, args.piece, args.x, args.y,
+        args.rotation, args.flipped,
+    )
     return Move(
-        player=args.player or state.current_player,
+        player=player,
         piece=args.piece,
-        x=args.x,
-        y=args.y,
+        x=engine_x,
+        y=engine_y,
         rotation=args.rotation,
         flipped=args.flipped,
     )
@@ -122,11 +174,13 @@ def cmd_legal_moves(args: Namespace) -> int:
     state = _load_state(args.state)
     moves = list_legal_moves(state, player=args.player, limit=args.limit)
     if args.json:
+        # JSON output uses raw engine coordinates for programmatic consumers.
         _dump_json({"moves": [move.to_dict() for move in moves]}, args.output)
     else:
         for move in moves:
+            hx, hy = _engine_to_human(state, move)
             print(
-                f"{move.player}: {move.piece} @ ({move.x}, {move.y}) "
+                f"{move.player}: {move.piece} @ ({hx}, {hy}) "
                 f"rotation={move.rotation} flipped={move.flipped}"
             )
     return 0
@@ -143,10 +197,12 @@ def cmd_suggest(args: Namespace) -> int:
         print(f"No legal move exists for {player}.")
         return 1
     if args.json:
+        # JSON output uses raw engine coordinates for programmatic consumers.
         _dump_json(move.to_dict(), args.output)
     else:
+        hx, hy = _engine_to_human(state, move)
         print(
-            f"{move.player}: {move.piece} @ ({move.x}, {move.y}) "
+            f"{move.player}: {move.piece} @ ({hx}, {hy}) "
             f"rotation={move.rotation} flipped={move.flipped}"
         )
     return 0
@@ -158,7 +214,7 @@ def _handle_human_turn(state: GameState) -> GameState | None:
     print(render_state(state))
     print(
         "\nEnter one of: "
-        "'move PIECE X Y ROTATION FLIPPED(0|1)', "
+        "'move PIECE X Y ROTATION FLIPPED(0|1)'  (X,Y = occupied cell position), "
         "'legal [N]', 'pass', 'show', 'export', 'import', 'quit'."
     )
     while True:
@@ -292,8 +348,9 @@ def _handle_human_turn(state: GameState) -> GameState | None:
                 print("No legal moves.")
             else:
                 for move in moves:
+                    hx, hy = _engine_to_human(state, move)
                     print(
-                        f"{move.piece} @ ({move.x}, {move.y}) "
+                        f"{move.piece} @ ({hx}, {hy}) "
                         f"rotation={move.rotation} flipped={move.flipped}"
                     )
             continue
@@ -308,14 +365,27 @@ def _handle_human_turn(state: GameState) -> GameState | None:
             if len(parts) != 6:
                 print("Expected exactly: move PIECE X Y ROTATION FLIPPED")
                 continue
-            # The interactive command mirrors the JSON/CLI move structure exactly.
+            # Translate human-friendly coordinates to engine bounding-box origin.
+            piece = parts[1]
+            human_x = int(parts[2])
+            human_y = int(parts[3])
+            rotation = int(parts[4])
+            flipped = bool(int(parts[5]))
+            try:
+                engine_x, engine_y = _human_to_engine(
+                    state, state.current_player, piece,
+                    human_x, human_y, rotation, flipped,
+                )
+            except ValueError as exc:
+                print(str(exc))
+                continue
             move = Move(
                 player=state.current_player,
-                piece=parts[1],
-                x=int(parts[2]),
-                y=int(parts[3]),
-                rotation=int(parts[4]),
-                flipped=bool(int(parts[5])),
+                piece=piece,
+                x=engine_x,
+                y=engine_y,
+                rotation=rotation,
+                flipped=flipped,
             )
             result = validate_move(state, move)
             if not result.ok:
@@ -345,8 +415,9 @@ def cmd_play(args: Namespace) -> int:
                 print(f"{state.current_player} passes.")
                 state = pass_turn(state)
             else:
+                hx, hy = _engine_to_human(state, move)
                 print(
-                    f"{state.current_player} plays {move.piece} at ({move.x}, {move.y}) "
+                    f"{state.current_player} plays {move.piece} at ({hx}, {hy}) "
                     f"rotation={move.rotation} flipped={move.flipped}"
                 )
                 state = apply_move(state, move)
@@ -383,7 +454,14 @@ def cmd_gui(_: Namespace) -> int:
 def build_parser() -> ArgumentParser:
     """Construct the full CLI parser and all subcommands."""
 
-    parser = ArgumentParser(prog="blokus", description="Blokus Classic Phase 1 CLI.")
+    parser = ArgumentParser(
+        prog="blokus",
+        description=(
+            "Blokus CLI. Coordinates in human-readable output refer to an "
+            "occupied cell of the piece being placed. JSON output uses "
+            "internal bounding-box origin coordinates."
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     new_parser = subparsers.add_parser("new", help="Create a new game state.")
@@ -400,8 +478,8 @@ def build_parser() -> ArgumentParser:
     validate_parser.add_argument("--state", required=True)
     validate_parser.add_argument("--player")
     validate_parser.add_argument("--piece", required=True)
-    validate_parser.add_argument("--x", required=True, type=int)
-    validate_parser.add_argument("--y", required=True, type=int)
+    validate_parser.add_argument("--x", required=True, type=int, help="Column of an occupied cell of the piece on the board.")
+    validate_parser.add_argument("--y", required=True, type=int, help="Row of an occupied cell of the piece on the board.")
     validate_parser.add_argument("--rotation", type=int, default=0)
     validate_parser.add_argument("--flipped", action="store_true")
     validate_parser.set_defaults(func=cmd_validate)
@@ -410,8 +488,8 @@ def build_parser() -> ArgumentParser:
     apply_parser.add_argument("--state", required=True)
     apply_parser.add_argument("--player")
     apply_parser.add_argument("--piece", required=True)
-    apply_parser.add_argument("--x", required=True, type=int)
-    apply_parser.add_argument("--y", required=True, type=int)
+    apply_parser.add_argument("--x", required=True, type=int, help="Column of an occupied cell of the piece on the board.")
+    apply_parser.add_argument("--y", required=True, type=int, help="Row of an occupied cell of the piece on the board.")
     apply_parser.add_argument("--rotation", type=int, default=0)
     apply_parser.add_argument("--flipped", action="store_true")
     apply_parser.add_argument("--output", help="Write the JSON state to this path.")

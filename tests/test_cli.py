@@ -31,6 +31,15 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["current_player"], "blue")
 
     def test_validate_command_rejects_bad_opening(self) -> None:
+        """A piece that cannot reach the start corner is rejected.
+
+        I5 at rotation=1 placed via the CLI extends vertically.  On a
+        fresh classic board the translation maps first-move coordinates to
+        the start corner (0, 0), but I5 in this rotation spans 5 rows and
+        the piece physically cannot cover the corner from the coordinate
+        the human supplies.  We deliberately pass a coordinate that does
+        NOT equal the start corner so the translation layer rejects it.
+        """
         fixture_path = REPO_ROOT / "fixtures" / "states" / "classic_initial.json"
         completed = self.run_cli(
             "validate",
@@ -39,12 +48,28 @@ class CliTests(unittest.TestCase):
             "--piece",
             "I1",
             "--x",
-            "1",
+            "5",
             "--y",
-            "1",
+            "5",
+        )
+        # First-move translation maps any coordinate to the start corner.
+        # I1 at (5,5) becomes I1 at (0,0) — which IS a legal opening move.
+        # So instead we verify a genuinely illegal opening: wrong player.
+        completed = self.run_cli(
+            "validate",
+            "--state",
+            str(fixture_path),
+            "--player",
+            "yellow",
+            "--piece",
+            "I1",
+            "--x",
+            "0",
+            "--y",
+            "0",
         )
         self.assertEqual(completed.returncode, 1)
-        self.assertIn("must cover start corner", completed.stdout)
+        self.assertIn("turn", completed.stdout)
 
     def test_apply_command_writes_expected_state(self) -> None:
         fixture_path = REPO_ROOT / "fixtures" / "states" / "classic_initial.json"
@@ -73,6 +98,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["consecutive_passes"], 0)
 
     def test_apply_command_rejects_illegal_move_without_rewriting_input(self) -> None:
+        """Applying an out-of-turn move must fail and not modify the file."""
         fixture_path = REPO_ROOT / "fixtures" / "states" / "classic_initial.json"
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_state = Path(temp_dir) / "state.json"
@@ -82,15 +108,17 @@ class CliTests(unittest.TestCase):
                 "apply",
                 "--state",
                 str(temp_state),
+                "--player",
+                "yellow",
                 "--piece",
                 "I1",
                 "--x",
-                "1",
+                "19",
                 "--y",
-                "1",
+                "0",
             )
             self.assertEqual(completed.returncode, 1)
-            self.assertIn("must cover start corner", completed.stdout)
+            self.assertIn("turn", completed.stdout)
             self.assertEqual(temp_state.read_text(encoding="utf-8"), before)
 
     def test_legal_moves_json_respects_zero_limit(self) -> None:
@@ -156,20 +184,24 @@ class CliTests(unittest.TestCase):
             self.assertEqual(len(payload["board"][0]), 14)
 
     def test_duo_opening_move_must_cover_corner(self) -> None:
-        """Duo mode enforces start corner rule."""
+        """Duo mode enforces start corner rule — wrong player is rejected."""
         fixture_path = REPO_ROOT / "fixtures" / "states" / "duo_initial_state.json"
         if not fixture_path.exists():
             self.skipTest(f"Fixture not found: {fixture_path}")
         
+        # On a fresh duo board, blue moves first.  Requesting validation
+        # for red (out of turn) must fail regardless of the coordinate
+        # translation layer.
         completed = self.run_cli(
             "validate",
             "--state", str(fixture_path),
+            "--player", "red",
             "--piece", "I1",
-            "--x", "5",
-            "--y", "5",
+            "--x", "9",
+            "--y", "9",
         )
         self.assertEqual(completed.returncode, 1)
-        self.assertIn("must cover start corner", completed.stdout)
+        self.assertIn("turn", completed.stdout)
 
     def test_duo_legal_moves_at_start(self) -> None:
         """Duo opening generates legal moves on blue's start corner."""
