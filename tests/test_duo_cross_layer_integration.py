@@ -342,6 +342,26 @@ class DuoCrossLayerIntegrationTests(unittest.TestCase):
         self.assertNotIn(classic_asset, used_images)
         self.assertFalse(hasattr(root, "mainloop"))
 
+    def test_gui_duo_button_click_dispatches_switch_mode_without_tk_mainloop(self) -> None:
+        """Duo sidebar clicks dispatch to switch_mode without a Tk mainloop."""
+
+        root = FakeRoot()
+        gui = BlokusGui.__new__(BlokusGui)
+        gui.mode = "classic"
+        gui.root = root
+        gui.sidebar_bounds = {
+            "duo": (10, 10, 30, 30),
+            "classic": (40, 10, 60, 30),
+        }
+        event: Any = type("FakeEvent", (), {"x": 20, "y": 20})()
+        self.assertFalse(hasattr(root, "mainloop"))
+
+        with patch.object(gui, "switch_mode", return_value=None) as switch_mode:
+            BlokusGui.on_button_press(gui, event)
+
+        switch_mode.assert_called_once_with("duo")
+        self.assertFalse(hasattr(root, "mainloop"))
+
 
 def test_duo_evaluator_replays_temporary_scenario_contract(tmp_path: Path) -> None:
     """Verify Duo evaluator scenario replay without depending on shared fixtures."""
