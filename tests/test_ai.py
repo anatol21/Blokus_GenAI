@@ -1,5 +1,5 @@
 import unittest
-
+from blokus.players import choose_move
 from blokus.engine import new_game, validate_move
 from blokus.players import choose_simple_move
 from blokus.pieces import PIECES
@@ -22,6 +22,23 @@ class SimpleAiTests(unittest.TestCase):
         state = new_game()
         state.remaining_pieces["blue"] = set()
         self.assertIsNone(choose_simple_move(state))
+
+
+class AiTests(unittest.TestCase):
+    def test_ai_can_select_legal_move_in_mode(self):
+        """AI player can pick a legal move in any mode."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                player = state.players[0]
+                move = choose_move(state, player=player, strategy="default")
+                
+                self.assertIsNotNone(move)
+                assert move is not None  # for mypy type narrowing
+
+                self.assertEqual(move.player, player)
+                result = validate_move(state, move)
+                self.assertTrue(result.ok)
 
 
 if __name__ == "__main__":

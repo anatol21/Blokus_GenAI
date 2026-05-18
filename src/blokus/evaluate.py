@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
-
 from blokus.engine import apply_move, compute_scores, new_game, occupied_square_counts, pass_turn
 from blokus.models import GameState, Move
 

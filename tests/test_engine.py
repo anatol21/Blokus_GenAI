@@ -1,4 +1,5 @@
 import unittest
+import pytest
 from copy import deepcopy
 
 from blokus.engine import (
@@ -87,15 +88,49 @@ def board_occupied_cells(state):
 
 
 class EngineRuleTests(unittest.TestCase):
-    def test_unsupported_duo_mode_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Unsupported mode 'duo'"):
-            new_game("duo")
+    @pytest.mark.parametrize("mode,expected_board_size,expected_players", [
+        ("classic", 20, ("blue", "yellow", "red", "green")),
+        ("duo", 14, ("blue", "red")),
+    ])
+    
+    def test_duo_mode_is_supported(self):
+        state = new_game("duo")
+        self.assertEqual(state.mode, "duo")
 
-    def test_opening_move_must_cover_corner(self) -> None:
-        state = new_game(mode="classic")
-        result = validate_move(state, Move("blue", "I1", 1, 1))
-        self.assertFalse(result.ok)
-        self.assertIn("must cover start corner", result.reason)
+    def test_new_game_creates_correct_board_size_and_players(self):
+        """Verify board size and player count match mode configuration."""
+        test_cases = [
+            ("classic", 20, ("blue", "yellow", "red", "green")),
+            ("duo", 14, ("blue", "red")),
+        ]
+        for mode, expected_board_size, expected_players in test_cases:
+         with self.subTest(mode=mode):
+            state = new_game(mode=mode)
+            self.assertEqual(len(state.board), expected_board_size)
+            self.assertEqual(len(state.board[0]), expected_board_size)
+            self.assertEqual(state.players, expected_players)
+
+    
+    def test_opening_move_must_cover_corner(self):
+        """All modes enforce opening move on start corner."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                result = validate_move(state, Move(state.players[0], "I1", 1, 1))
+                self.assertFalse(result.ok)
+                self.assertIn("must cover start corner", result.reason)
+
+  
+    def test_legal_first_moves_cover_start_corner(self):
+        """First moves must include the start corner."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                moves = list_legal_moves(state, player=state.players[0], limit=100)
+                start_x, start_y = state.start_corners[state.players[0]]
+                for move in moves:
+                    cells = absolute_cells(move)
+                    self.assertIn((start_x, start_y), cells)
 
     def test_turn_order_is_enforced(self) -> None:
         state = new_game(mode="classic")

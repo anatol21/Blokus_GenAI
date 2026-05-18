@@ -27,8 +27,19 @@ CLASSIC_CONFIG = ModeConfig(
     },
 )
 
+DUO_CONFIG = ModeConfig(
+    name="duo",
+    board_size=14,
+    players=("blue", "red"),  # 2 players only
+    start_corners={
+        "blue": (4, 4),
+        "red": (9, 9),
+    },
+)
+
 MODE_CONFIGS = {
     CLASSIC_CONFIG.name: CLASSIC_CONFIG,
+    DUO_CONFIG.name: DUO_CONFIG,
 }
 
 PLAYER_SYMBOLS = {

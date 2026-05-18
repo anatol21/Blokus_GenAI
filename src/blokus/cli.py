@@ -18,7 +18,8 @@ def _load_state(path: str) -> GameState:
     """Load a serialized game state from JSON."""
 
     with Path(path).open("r", encoding="utf-8") as handle:
-        return GameState.from_dict(json.load(handle))
+        state = GameState.from_dict(json.load(handle))
+        return state
 
 
 def _dump_json(payload: Mapping[str, object], output_path: str | None) -> None:
@@ -65,11 +66,11 @@ def _move_from_args(state: GameState, args: Namespace) -> Move:
 
 def cmd_new(args: Namespace) -> int:
     """Create a fresh game state and emit it as JSON."""
-
     controllers = _parse_controllers(args.mode, args.players)
     state = new_game(mode=args.mode, controllers=controllers)
     _dump_json(state.to_dict(), args.output)
     return 0
+
 
 
 def cmd_show(args: Namespace) -> int:
@@ -464,3 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc))
         return 1
+
+def run_cli(argv=None):
+    """Compatibility wrapper for old tests."""
+    return main(argv)
