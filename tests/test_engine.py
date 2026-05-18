@@ -1,6 +1,7 @@
 import unittest
 import pytest
 from copy import deepcopy
+from typing import cast
 
 from blokus.engine import (
     apply_move,
@@ -48,7 +49,7 @@ def _move_uniqueness_key(move: Move) -> tuple[str, frozenset[tuple[int, int]]]:
 
 
 def _serialized_snapshot(state: GameState) -> dict[str, object]:
-    return deepcopy(state.to_dict())
+    return cast(dict[str, object], deepcopy(state.to_dict()))
 
 
 def blocked_blue_state() -> GameState:
@@ -774,6 +775,12 @@ class EngineRuleTests(unittest.TestCase):
         state.remaining_pieces["blue"] = set()
         state.history = [Move("blue", "I2", 0, 0), Move("blue", "I1", 1, 1)]
         self.assertEqual(score_player(state, "blue"), 20)
+
+    def test_empty_rack_scoring_awards_finish_bonus_without_i1_bonus(self) -> None:
+        state = new_game()
+        state.remaining_pieces["blue"] = set()
+        state.history = [Move("blue", "I1", 0, 0), Move("blue", "I2", 1, 1)]
+        self.assertEqual(score_player(state, "blue"), 15)
 
 
 if __name__ == "__main__":
