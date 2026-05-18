@@ -260,6 +260,52 @@ class DuoCrossLayerIntegrationTests(unittest.TestCase):
             self.assertEqual(after_path.read_text(encoding="utf-8"), after_text)
             self.assertFalse(invalid_path.exists())
 
+    def test_cli_duo_pass_turn_rejects_player_with_legal_moves(self) -> None:
+        """Duo pass-turn rejects a current player who still has legal moves."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            initial_path = temp_path / "initial.json"
+            after_path = temp_path / "after.json"
+            passed_path = temp_path / "passed.json"
+
+            created = run_cli("new", "--mode", "duo", "--output", str(initial_path))
+            self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+
+            applied = run_cli(
+                "apply",
+                "--state",
+                str(initial_path),
+                "--piece",
+                "I1",
+                "--x",
+                "4",
+                "--y",
+                "4",
+                "--output",
+                str(after_path),
+            )
+            self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+
+            after_text = after_path.read_text(encoding="utf-8")
+            rejected = run_cli(
+                "pass-turn",
+                "--state",
+                str(after_path),
+                "--player",
+                "red",
+                "--output",
+                str(passed_path),
+            )
+            self.assertEqual(rejected.returncode, 1)
+            self.assertIn(
+                "A player may only pass when no legal move exists.",
+                rejected.stdout,
+            )
+            self.assertEqual(after_path.read_text(encoding="utf-8"), after_text)
+            self.assertFalse(passed_path.exists())
+            self.assertEqual(load_json(after_path)["current_player"], "red")
+
     def test_cli_duo_legal_moves_json_matches_engine_limited_listing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "state.json"
