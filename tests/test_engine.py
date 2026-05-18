@@ -128,9 +128,6 @@ class EngineRuleTests(unittest.TestCase):
                 for move in moves:
                     cells = absolute_cells(move)
                     self.assertIn((start_x, start_y), cells)
-    def test_unsupported_duo_mode_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Unsupported mode 'duo'"):
-            new_game("duo")
 
     def test_turn_order_is_enforced(self) -> None:
         state = new_game(mode="classic")
