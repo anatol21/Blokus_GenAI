@@ -221,7 +221,6 @@ class BlokusGui:
         # Update title
         mode_title = "Classic" if new_mode == "classic" else "Duo"
         self.root.title(f"Blokus {mode_title} GUI")
-        
         self.redraw()
     def compute_scale(self) -> float:
         """Choose a uniform scale that fits the design inside the current screen."""
@@ -861,7 +860,7 @@ class BlokusGui:
         if self.state.mode == "duo": 
             players = ["blue", "red"]  
         else: 
-            players = PLAYER_ORDER
+            players = list(PLAYER_ORDER)
         for row_index, player in enumerate(players, start=2):
             controller_vars[player] = tk.StringVar(value=self.state.controller_types.get(player, "human"))
             strategy_vars[player] = tk.StringVar(

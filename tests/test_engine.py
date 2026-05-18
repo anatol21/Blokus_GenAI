@@ -93,6 +93,9 @@ class EngineRuleTests(unittest.TestCase):
         ("duo", 14, ("blue", "red")),
     ])
     
+    def test_duo_mode_is_supported(self):
+        state = new_game("duo")
+        self.assertEqual(state.mode, "duo")
 
     def test_new_game_creates_correct_board_size_and_players(self):
         """Verify board size and player count match mode configuration."""
@@ -107,7 +110,7 @@ class EngineRuleTests(unittest.TestCase):
             self.assertEqual(len(state.board[0]), expected_board_size)
             self.assertEqual(state.players, expected_players)
 
-    @pytest.mark.parametrize("mode", ["classic", "duo"])
+    
     def test_opening_move_must_cover_corner(self):
         """All modes enforce opening move on start corner."""
         for mode in ["classic", "duo"]:
@@ -117,7 +120,7 @@ class EngineRuleTests(unittest.TestCase):
                 self.assertFalse(result.ok)
                 self.assertIn("must cover start corner", result.reason)
 
-    @pytest.mark.parametrize("mode", ["classic", "duo"])
+  
     def test_legal_first_moves_cover_start_corner(self):
         """First moves must include the start corner."""
         for mode in ["classic", "duo"]:
