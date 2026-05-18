@@ -1,4 +1,11 @@
-"""OpenRouter-backed model provider for agentic review."""
+"""OpenRouter-backed model provider for agentic PR review.
+
+This module is the external LLM boundary for the agentic review pipeline. It
+constructs authenticated OpenRouter chat-completions requests for specialist
+review prompts and returns the provider's message text to the response parser.
+The coordinator treats failures from this layer as unavailable provider risk
+rather than as ordinary review findings.
+"""
 
 from __future__ import annotations
 
@@ -22,12 +29,27 @@ _OPENROUTER_REQUEST_SEMAPHORE = threading.Semaphore(_MAX_CONCURRENT_OPENROUTER_R
 
 
 class ProviderUnavailable(RuntimeError):
-    """Raised when the LLM provider cannot be used."""
+    """Raised when OpenRouter cannot be used for an agentic review.
+
+    This exception wraps missing credentials, invalid provider configuration,
+    transport failures, exhausted retries, invalid JSON, oversized responses,
+    and unusable response shapes so callers can report a provider-level
+    uncertain risk.
+    """
 
 
 @dataclass(frozen=True)
 class OpenRouterClient:
-    """Thin OpenRouter client using the chat-completions API."""
+    """Minimal OpenRouter chat-completions client for specialist review prompts.
+
+    The client owns only provider connection settings and does not parse
+    specialist findings. It sends system/user prompt pairs to a configured model
+    and returns the first response message as stripped text.
+
+    Warning:
+        Instances carry the OpenRouter API key in memory. Do not log or serialize
+        the client, and keep credential creation scoped to trusted review runs.
+    """
 
     api_key: str
     base_url: str
@@ -36,6 +58,16 @@ class OpenRouterClient:
 
     @classmethod
     def from_env(cls, config: ReviewConfig) -> "OpenRouterClient":
+        """Create an OpenRouter client from review config and environment.
+
+        Reads `OPENROUTER_API_KEY`, trims the configured base URL, and copies timeout
+        and retry settings from `ReviewConfig.provider`.
+
+        Warning:
+            This method handles credential discovery. It raises `ProviderUnavailable`
+            when `OPENROUTER_API_KEY` is missing, which lets the coordinator skip LLM
+            review without exposing the secret or attempting unauthenticated calls.
+        """
         api_key = os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             raise ProviderUnavailable("`OPENROUTER_API_KEY` is not set.")
@@ -47,6 +79,20 @@ class OpenRouterClient:
         )
 
     def complete(self, *, model: str, system_prompt: str, user_prompt: str) -> str:
+        """Request one deterministic chat completion from OpenRouter.
+
+        Builds a `temperature=0` chat-completions payload, posts it to
+        `{base_url}/chat/completions`, retries retryable HTTP/network/decode
+        failures within the configured retry budget, and returns normalized text
+        from the first `choices[0].message.content` value.
+
+        Warning:
+            This method performs the external API call, attaches the bearer token,
+            applies retry behavior, and assumes an OpenAI-compatible response shape.
+            It raises `ProviderUnavailable` for invalid retry configuration,
+            nonretryable HTTP errors, exhausted retries, invalid JSON, oversized or
+            unreadable bodies, or responses without a usable first message.
+        """
         if self.max_retries < 0:
             raise ProviderUnavailable("OpenRouter `max_retries` must be greater than or equal to 0.")
         if self.max_retries > MAX_PROVIDER_RETRIES:
