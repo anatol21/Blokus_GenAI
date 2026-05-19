@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TypedDict
+from typing import TypedDict, cast
 
 from blokus.config import get_mode_config, player_for_symbol, symbol_for_player
 from blokus.pieces import PIECE_IDS
@@ -237,7 +237,28 @@ class GameState:
             for player in players
         }
 
-        history = [Move.from_dict(item) for item in data.get("history", [])]
+        history: list[Move] = []
+        played_pieces: dict[str, set[str]] = {player: set() for player in players}
+        for item in cast(list[Mapping[str, object]], data.get("history", [])):
+            move = Move.from_dict(item)
+            if move.player not in players:
+                raise ValueError(f"History references unknown player '{move.player}'.")
+            if move.piece not in PIECE_IDS:
+                raise ValueError(f"History references unknown piece '{move.piece}'.")
+            if move.piece in played_pieces[move.player]:
+                raise ValueError(
+                    f"Piece '{move.piece}' already appears in history for player '{move.player}'."
+                )
+            played_pieces[move.player].add(move.piece)
+            history.append(move)
+        for player, pieces in played_pieces.items():
+            readded_pieces = pieces & remaining_pieces[player]
+            if readded_pieces:
+                piece_list = ", ".join(sorted(readded_pieces, key=lambda piece_id: PIECE_IDS.index(piece_id)))
+                raise ValueError(
+                    f"Piece '{piece_list}' already appears in history for player '{player}' "
+                    "and cannot remain available."
+                )
 
         controller_source = data.get("controller_types", {})
         controllers = {
