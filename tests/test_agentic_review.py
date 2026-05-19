@@ -18,7 +18,15 @@ import blokus.review.coordinator as review_coordinator
 import blokus.review.diff as review_diff
 import blokus.review.renderer as review_renderer
 import blokus.review.static_analyzer as review_static_analyzer
-from blokus.review.config import MAX_PROVIDER_RETRIES, HeuristicConfig, PerformanceConfig, ProviderConfig, ReviewConfig, load_review_config
+from blokus.review.config import (
+    MAX_PROVIDER_RETRIES,
+    HeuristicConfig,
+    PerformanceConfig,
+    ProviderConfig,
+    ReviewConfig,
+    _coerce_str_list,
+    load_review_config,
+)
 from blokus.review.coordinator import ReviewCoordinator, ReviewRun
 from blokus.review.diff import build_review_context, should_run_performance_review
 from blokus.review.provider import OpenRouterClient, ProviderUnavailable
@@ -877,6 +885,36 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertEqual(response.findings[0].severity, "high")
         self.assertEqual(response.findings[0].confidence, "medium")
         self.assertEqual(response.findings[0].category, "static-analysis")
+
+    def test_specialist_response_defaults_unknown_severity_and_confidence(self) -> None:
+        files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
+        response = _parse_specialist_response(
+            json.dumps(
+                {
+                    "findings": [
+                        {
+                            "title": "Non-canonical enums",
+                            "severity": "severe",
+                            "confidence": "very_high",
+                            "category": "correctness",
+                            "file": "src/blokus/engine.py",
+                            "line_start": 20,
+                            "line_end": 20,
+                            "evidence": "Changed logic mishandles empty input.",
+                            "impact": "Can reject legal moves.",
+                            "suggested_action": "Add the missing empty-input guard.",
+                            "blocking_recommendation": True,
+                        }
+                    ]
+                }
+            ),
+            "correctness",
+            files,
+        )
+
+        self.assertEqual(len(response.findings), 1)
+        self.assertEqual(response.findings[0].severity, "moderate")
+        self.assertEqual(response.findings[0].confidence, "medium")
 
     def test_specialist_response_parses_uncertain_risks_and_note(self) -> None:
         files = (_changed_file("src/blokus/engine.py", line_start=20, line_end=20),)
@@ -3638,15 +3676,14 @@ class AgenticReviewTests(unittest.TestCase):
         self.assertLessEqual(len(fake_runner.captured_diff), review_coordinator.MAX_RENDERED_DIFF_CHARS)
         self.assertIn("truncated for scale", fake_runner.captured_diff)
 
-    def test_config_coerces_string_to_list(self) -> None:
-        """Config should coerce string values to single-item lists."""
-        import warnings
+    def test_config_rejects_string_list_values(self) -> None:
+        """Config should require list syntax for string-list fields."""
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / ".github").mkdir()
             config_text = """
 max_findings = 5
-excluded_globs = "*.md"
+excluded_globs = ["*.md"]
 blocking_severities = ["critical", "high"]
 prompt_dir = ".github/prompts"
 spec_path = "docs/spec.md"
@@ -3674,18 +3711,16 @@ default = "default-model"
 """
             (repo_root / ".github" / "agentic-review.toml").write_text(config_text, encoding="utf-8")
 
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                config = load_review_config(repo_root=repo_root)
+            with self.assertRaisesRegex(ValueError, "performance.path_markers.*must be a list, got a string"):
+                load_review_config(repo_root=repo_root)
 
-                # Check that string was coerced to tuple
-                self.assertEqual(config.excluded_globs, ("*.md",))
-                self.assertEqual(config.performance.path_markers, ("src/engine.py",))
+    def test_coerce_str_list_rejects_empty_items(self) -> None:
+        with self.assertRaisesRegex(ValueError, "path_markers.*index 1.*must not be empty"):
+            _coerce_str_list(["src/blokus/engine.py", "", "tests/"], "path_markers", REPO_ROOT)
 
-                # Check that warning was issued
-                self.assertTrue(
-                    any("excluded_globs" in str(warning.message) for warning in w)
-                )
+    def test_coerce_str_list_rejects_non_string_items(self) -> None:
+        with self.assertRaisesRegex(ValueError, "path_markers.*index 1.*must be a string"):
+            _coerce_str_list(["src/blokus/engine.py", 7], "path_markers", REPO_ROOT)
 
     def test_config_rejects_invalid_types(self) -> None:
         """Config should reject non-string, non-list values."""
