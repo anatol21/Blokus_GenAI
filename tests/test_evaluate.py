@@ -58,10 +58,18 @@ class EvaluationHarnessTests(unittest.TestCase):
     # ── Negative-scenario evidence ──────────────────────────────────
 
     def test_invalid_move_scenario_reports_execution_failure(self) -> None:
+        """EVAL-02: illegal opening replay returns passed=false with scenario name and engine detail."""
+
         result = run_scenario(SCENARIO_FAILURE_DIR / "classic_invalid_opening_move.json")
         self.assertFalse(result.passed)
+        # Oracle: result includes the scenario name
+        self.assertEqual(result.name, "classic_invalid_opening_move")
+        # Oracle: result includes structured move-execution failure wrapper
         self.assertIn("Scenario failed during move execution", result.detail)
+        # Oracle: result includes concrete engine reason (player + corner)
         self.assertIn("must cover start corner", result.detail)
+        self.assertIn("blue", result.detail)
+        self.assertIn("(0, 0)", result.detail)
 
     def test_expectation_mismatch_scenario_reports_actual_value(self) -> None:
         result = run_scenario(SCENARIO_FAILURE_DIR / "classic_expectation_mismatch.json")
