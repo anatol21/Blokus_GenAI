@@ -72,9 +72,16 @@ class EvaluationHarnessTests(unittest.TestCase):
         self.assertIn("(0, 0)", result.detail)
 
     def test_expectation_mismatch_scenario_reports_actual_value(self) -> None:
+        """EVAL-03: oracle mismatch reports the specific field, expected value, and actual value."""
+
         result = run_scenario(SCENARIO_FAILURE_DIR / "classic_expectation_mismatch.json")
         self.assertFalse(result.passed)
-        self.assertIn("Expected current player blue, got yellow.", result.detail)
+        # Oracle: result includes the scenario name
+        self.assertEqual(result.name, "classic_expectation_mismatch")
+        # Oracle: detail identifies the mismatched field with expected and actual values
+        self.assertIn("Expected current player", result.detail)
+        self.assertIn("blue", result.detail)
+        self.assertIn("got yellow", result.detail)
 
     def test_counterexample_scenario_replays_piece_reuse_failure(self) -> None:
         result = run_scenario(SCENARIO_FAILURE_DIR / "classic_spent_piece_reuse_counterexample.json")
