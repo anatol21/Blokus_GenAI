@@ -84,9 +84,18 @@ class EvaluationHarnessTests(unittest.TestCase):
         self.assertIn("got yellow", result.detail)
 
     def test_counterexample_scenario_replays_piece_reuse_failure(self) -> None:
+        """PERS-10: spent-piece counterexample replays with diagnosable failure identifying piece and player."""
+
         result = run_scenario(SCENARIO_FAILURE_DIR / "classic_spent_piece_reuse_counterexample.json")
         self.assertFalse(result.passed)
+        # Oracle: result includes the scenario name
+        self.assertEqual(result.name, "classic_spent_piece_reuse_counterexample")
+        # Oracle: result includes structured move-execution failure wrapper
+        self.assertIn("Scenario failed during move execution", result.detail)
+        # Oracle: result includes the spent-piece-unavailable reason with piece and player
         self.assertIn("no longer available", result.detail)
+        self.assertIn("I1", result.detail)
+        self.assertIn("blue", result.detail)
 
 
 if __name__ == "__main__":
