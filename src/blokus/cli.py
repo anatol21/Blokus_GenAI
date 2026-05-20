@@ -379,6 +379,9 @@ def _handle_human_turn(state: GameState) -> GameState | None:
             except ValueError as exc:
                 print(str(exc))
                 continue
+            except KeyError:
+                print(f"Unknown piece '{piece}'. Use 'legal' to see valid pieces.")
+                continue
             move = Move(
                 player=state.current_player,
                 piece=piece,
