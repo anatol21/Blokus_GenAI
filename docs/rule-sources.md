@@ -14,9 +14,8 @@
 5. The game ends when all players are blocked.
 6. Scoring follows the standard remaining-squares rule with official perfect-game bonuses.
 
-## Intentional limits in this phase
+## Implementation boundary
 
-- Duo mode is not implemented yet.
+- Duo is engine-supported through mode configuration; Classic remains the primary rule-source baseline.
 - The CLI is intentionally minimal and text-based.
 - The computer player is deterministic and simple by design; strong play strength is out of scope.
-
