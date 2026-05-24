@@ -318,18 +318,24 @@ def _parse_blocking_recommendation(value: object) -> bool:
 
 def _normalize_severity(value: object) -> str:
     normalized = str(value).strip().lower()
-    return {
+    mapped = {
         "medium": "moderate",
         "med": "moderate",
     }.get(normalized, normalized)
+    if mapped not in {"critical", "high", "moderate", "low"}:
+        return "moderate"
+    return mapped
 
 
 def _normalize_confidence(value: object) -> str:
     normalized = str(value).strip().lower()
-    return {
+    mapped = {
         "moderate": "medium",
         "med": "medium",
     }.get(normalized, normalized)
+    if mapped not in {"high", "medium", "low"}:
+        return "medium"
+    return mapped
 
 
 def _normalize_category(value: object) -> str:
