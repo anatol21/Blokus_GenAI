@@ -55,6 +55,7 @@
     "current_player": "blue",
     "finished": false,
     "history_length": 8,
+    "consecutive_passes": 0,
     "occupied_counts": {
       "blue": 3,
       "yellow": 3,
