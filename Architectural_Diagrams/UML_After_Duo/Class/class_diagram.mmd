@@ -1,0 +1,223 @@
+classDiagram
+    namespace Models_and_Config {
+        class GameState {
+            +str mode
+            +list~list[str]~ board
+            +tuple~str~ players
+            +dict~str, Coordinate~ start_corners
+            +dict~str, set[str]~ remaining_pieces
+            +list~Move~ history
+            +int current_player_index
+            +int consecutive_passes
+            +bool finished
+            +dict~str, str~ controller_types
+            +dict~str, str~ controller_strategies
+            -dict~str, set[Coordinate]~ occupied_cells_by_player
+            +int board_size
+            +str current_player
+            +clone() GameState
+            +to_dict() GameStatePayload
+            +from_dict(data) GameState $
+        }
+
+        class Move {
+            +str player
+            +str piece
+            +int x
+            +int y
+            +int rotation
+            +bool flipped
+            +to_dict() MovePayload
+            +from_dict(data) Move $
+        }
+
+        class ValidationResult {
+            +bool ok
+            +str reason
+        }
+
+        class ModeConfig {
+            +str name
+            +int board_size
+            +tuple~str~ players
+            +dict~str, Coordinate~ start_corners
+        }
+
+        class PieceDefinition {
+            +str piece_id
+            +tuple~Coordinate~ cells
+            +tuple~Transform~ transforms
+            +int size
+        }
+
+        class Transform {
+            +int rotation
+            +bool flipped
+            +tuple~Coordinate~ cells
+        }
+
+        class MovePayload {
+            <<TypedDict>>
+            +str player
+            +str piece
+            +int x
+            +int y
+            +int rotation
+            +bool flipped
+        }
+
+        class GameStatePayload {
+            <<TypedDict>>
+            +str mode
+            +int board_size
+            +list~str~ players
+            +dict~str, list[int]~ start_corners
+            +list~str~ board
+            +dict~str, list[str]~ remaining_pieces
+            +list~MovePayload~ history
+            +str current_player
+            +int consecutive_passes
+            +bool finished
+            +dict~str, str~ controller_types
+            +dict~str, str~ controller_strategies
+        }
+    }
+
+    namespace Core_Engine {
+        class Engine {
+            <<module>>
+            +new_game(mode, controllers, strategies) GameState $
+            +board_in_bounds(state, x, y) bool $
+            +get_occupied_cells(state, player) set~Coordinate~ $
+            +is_first_move(state, player) bool $
+            +validate_move(state, move) ValidationResult $
+            +apply_move(state, move) GameState $
+            +list_legal_moves(state, player, limit) list~Move~ $
+            +validate_pass(state, player) ValidationResult $
+            +pass_turn(state, player) GameState $
+            +validate_loaded_state(loaded) None $
+            +score_player(state, player) int $
+            +compute_scores(state) dict~str, int~ $
+            +occupied_square_counts(state) dict~str, int~ $
+        }
+
+        class Players {
+            <<module>>
+            +choose_simple_move(state, player) Move $
+            +available_strategies() tuple~str~ $
+            +choose_move(state, player, strategy) Move $
+        }
+
+        class PiecesCatalog {
+            <<catalog>>
+            +dict~str, PieceDefinition~ items
+        }
+    }
+
+    namespace Presentation_GUI {
+        class BlokusGui {
+            +Tk root
+            +str mode
+            +float scale
+            +int window_width
+            +int window_height
+            +GameState state
+            +BoardMetrics board_metrics
+            +Canvas canvas
+            +str status_text
+            +DragState drag_state
+            +switch_mode(new_mode) None
+            +compute_scale() float
+            +scale_value(value) int
+            +run() None
+            +redraw() None
+            +draw_sidebar_overlays() None
+            +draw_mode_control(mode_name, x0, y0, x1, y1) None
+            +draw_board_state() None
+            +draw_status_panel() None
+            +draw_piece_panel() None
+            +layout_piece_cells(piece_id) PieceRenderLayout
+            +exact_piece_layout(piece_id, slot) PieceRenderLayout
+            +fitted_piece_layout(piece_id, bbox) PieceRenderLayout
+            +best_piece_transform(piece_id, available_width, available_height) dict
+            +draw_drag_preview() None
+            +draw_floating_piece_preview() None
+            +on_motion(event) None
+            +on_button_press(event) None
+            +on_button_release(event) None
+            +rotate_drag_clockwise(event) None
+            +flip_drag_piece(event) None
+            +advance_automatic_turns() None
+            +show_legal_move_dialog() None
+        }
+
+        class DragState {
+            +str piece_id
+            +tuple~int, int~ base_cell
+            +int rotation
+            +bool flipped
+        }
+
+        class PieceRenderLayout {
+            +tuple~float, float, float, float~ bbox
+            +dict~Coordinate, tuple~ cell_rects
+        }
+
+        class BoardMetrics {
+            +int board_x
+            +int board_y
+            +int display_size
+            +float grid_origin_x
+            +float grid_origin_y
+            +float cell_size
+        }
+
+        class SidebarPieceSlot {
+            +tuple~float, float, float, float~ bbox
+            +tuple~Coordinate~ normalized_shape
+            +dict~Coordinate, tuple~ cell_rects
+        }
+    }
+
+    namespace Orchestration_CLI {
+        class CLI {
+            <<module>>
+            +cmd_new(args) int $
+            +cmd_show(args) int $
+            +cmd_validate(args) int $
+            +cmd_apply(args) int $
+            +cmd_pass_turn(args) int $
+            +cmd_legal_moves(args) int $
+            +cmd_suggest(args) int $
+            +cmd_play(args) int $
+            +cmd_evaluate(args) int $
+            +cmd_gui(args) int $
+            +build_parser() ArgumentParser $
+            +main(argv) int $
+            +run_cli(argv) int $
+        }
+
+    }
+
+    GameState "1" *-- "*" Move : history
+    PieceDefinition "1" *-- "1..8" Transform : transforms
+    GameState ..> ModeConfig : relies on
+    GameState ..> GameStatePayload : serializes
+    Move ..> MovePayload : serializes
+
+    PiecesCatalog "1" *-- "21" PieceDefinition : contains standard shapes
+    Players ..> Engine : queries legal moves
+    Engine ..> GameState : operates on
+    Engine ..> PiecesCatalog : accesses
+    Engine ..> Move : validates/applies
+
+    BlokusGui "1" o-- "1" GameState : manages
+    BlokusGui "1" *-- "0..1" DragState : drag_state
+    BlokusGui "1" *-- "1" BoardMetrics : board_metrics
+    BlokusGui "1" *-- "21" PieceRenderLayout : piece_layouts
+    BlokusGui "1" *-- "21" SidebarPieceSlot : piece_slots
+    BlokusGui ..> Engine : attempts moves
+
+    CLI ..> ModeConfig : instantiates
+    CLI ..> Engine : invokes new_game()
+    CLI ..> BlokusGui : starts run()

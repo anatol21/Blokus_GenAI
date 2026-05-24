@@ -1,0 +1,223 @@
+classDiagram
+    %% Diagram 1: System Level Component Interactions
+    class Models_Config_Component {
+        <<Component>>
+    }
+    class Core_Engine_Component {
+        <<Component>>
+    }
+    class CLI_Component {
+        <<Component>>
+    }
+    class GUI_Component {
+        <<Component>>
+    }
+
+    CLI_Component ..> Core_Engine_Component : utilizes
+    CLI_Component ..> Models_Config_Component : consumes
+    
+    GUI_Component ..> Core_Engine_Component : utilizes
+    GUI_Component ..> Models_Config_Component : consumes
+    
+    Core_Engine_Component ..> Models_Config_Component : consumes
+
+classDiagram
+    %% Diagram 2: Models, Config & Core Engine Architecture
+    
+    namespace Models_Config {
+        class GameState {
+            +mode: str
+            +board_size: int
+            +players: tuple[str, ...]
+            +start_corners: dict[str, tuple[int, int]]
+            +board: dict[tuple[int, int], str]
+            +remaining_pieces: dict[str, set[str]]
+            +history: list[Move]
+            +turn_index: int
+            +active: bool
+            +current_player() str
+            +clone() GameState
+            +to_dict() GameStatePayload
+            +from_dict(data: Mapping[str, object]) GameState$
+        }
+        class Move {
+            +player: str
+            +piece: str
+            +x: int
+            +y: int
+            +rotation: int
+            +flipped: bool
+            +to_dict() MovePayload
+            +from_dict(data: Mapping[str, object]) Move$
+        }
+        class ValidationResult {
+            +valid: bool
+            +reason: str | None
+        }
+        class ModeConfig {
+            +name: str
+            +board_size: int
+            +players: tuple[str, ...]
+            +start_corners: dict[str, tuple[int, int]]
+            +get_mode_config(name: str) ModeConfig$
+            +symbol_for_player(player: str) str$
+            +player_for_symbol(symbol: str) str$
+        }
+        class PieceDefinition {
+            +piece_id: str
+            +cells: tuple[tuple[int, int], ...]
+            +transforms: tuple[Transform, ...]
+            +size() int
+        }
+        class Transform {
+            +rotation: int
+            +flipped: bool
+            +cells: tuple[tuple[int, int], ...]
+        }
+        class GameStatePayload {
+            <<TypedDict>>
+            +mode: str
+            +board_size: int
+            +players: list[str]
+            +start_corners: dict[str, list[int]]
+            +board: list[str]
+            +remaining_pieces: dict[str, list[str]]
+            +history: list[MovePayload]
+            +current_player: str
+        }
+        class MovePayload {
+            <<TypedDict>>
+            +player: str
+            +piece: str
+            +x: int
+            +y: int
+            +rotation: int
+            +flipped: bool
+        }
+    }
+
+    namespace Core_Engine {
+        class Engine {
+            <<module>>
+            +new_game(mode: str, controllers: dict[str, str], strategies: dict[str, str]) GameState$
+            +board_in_bounds(state: GameState, x: int, y: int) bool$
+            +get_occupied_cells(state: GameState, player: str) set[tuple[int, int]]$
+            +is_first_move(state: GameState, player: str) bool$
+            +validate_move(state: GameState, move: Move) ValidationResult$
+            +list_legal_moves(state: GameState, player: str, limit: int) list[Move]$
+            +apply_move(state: GameState, move: Move) GameState$
+            +validate_pass(state: GameState, player: str) ValidationResult$
+            +pass_turn(state: GameState, player: str) GameState$
+            +validate_loaded_state(loaded: GameState) None$
+            +score_player(state: GameState, player: str) int$
+            +compute_scores(state: GameState) dict[str, int]$
+            +occupied_square_counts(state: GameState) dict[str, int]$
+        }
+        class Players {
+            <<module>>
+            +choose_simple_move(state: GameState, player: str) Move | None$
+            +available_strategies() tuple[str, ...]$
+            +choose_move(state: GameState, player: str, strategy: str) Move | None$
+        }
+    }
+
+    GameState *-- Move : contains
+    Engine ..> GameState : evaluates/mutates
+    Engine ..> Move : validates/applies
+    Players ..> GameState : analyzes
+    Players ..> Move : generates
+
+classDiagram
+    %% Diagram 3: Presentation Layer Architecture (CLI & GUI)
+    
+    class Core_Engine_Component {
+        <<Component>>
+    }
+    
+    class Models_Config_Component {
+        <<Component>>
+    }
+
+    namespace CLI_Layer {
+        class CLI {
+            <<module>>
+            +cmd_new(args: Namespace) int$
+            +cmd_show(args: Namespace) int$
+            +cmd_validate(args: Namespace) int$
+            +cmd_apply(args: Namespace) int$
+            +cmd_pass_turn(args: Namespace) int$
+            +cmd_legal_moves(args: Namespace) int$
+            +cmd_suggest(args: Namespace) int$
+            +cmd_play(args: Namespace) int$
+            +cmd_gui(args: Namespace) int$
+            -_load_state(path: str) GameState$
+            -_dump_json(payload: dict[str, object], output_path: str)$
+            +build_parser() ArgumentParser$
+            +main(argv: list[str]) int$
+            +run_cli(argv: Any)$
+        }
+    }
+
+    namespace GUI_Layer {
+        class BlokusGui {
+            +__init__(root: tk.Tk, mode: str) None
+            +switch_mode(new_mode: str) None
+            +compute_scale() float
+            +scale_value(value: int) int
+            +run() None
+            +redraw() None
+            +draw_sidebar_overlays() None
+            +draw_mode_control(mode_name: str, x0: float, y0: float, x1: float, y1: float) None
+            +draw_board_state() None
+            +draw_status_panel() None
+            +draw_piece_panel() None
+            +layout_piece_cells(piece_id: str) PieceRenderLayout
+            +exact_piece_layout(piece_id: str, slot: SidebarPieceSlot) PieceRenderLayout | None
+            +fitted_piece_layout(piece_id: str, bbox: tuple[float, float, float, float]) PieceRenderLayout
+            +draw_drag_preview() None
+            +on_motion(event: tk.Event) None
+            +on_button_press(event: tk.Event) None
+            +on_button_release(event: tk.Event) None
+            +advance_automatic_turns() None
+            +show_legal_move_dialog() None
+            +apply_suggested_move(move: Move, dialog: tk.Toplevel) None
+            +handle_restart() None
+        }
+        
+        class DragState {
+            +piece_id: str
+            +base_cell: tuple[int, int]
+            +rotation: int
+            +flipped: bool
+        }
+        
+        class BoardMetrics {
+            +board_x: int
+            +board_y: int
+            +display_size: int
+            +grid_origin_x() float
+            +grid_origin_y() float
+            +cell_size() float
+        }
+        
+        class SidebarPieceSlot {
+            +bbox: tuple[float, float, float, float]
+            +normalized_shape: tuple[tuple[int, int], ...]
+            +cell_rects: dict[tuple[int, int], tuple[float, float, float, float]]
+        }
+        
+        class PieceRenderLayout {
+            +bbox: tuple[float, float, float, float]
+            +cell_rects: dict[tuple[int, int], tuple[float, float, float, float]]
+        }
+    }
+
+    BlokusGui *-- DragState : manages
+    BlokusGui *-- BoardMetrics : uses
+    BlokusGui *-- SidebarPieceSlot : maps
+    BlokusGui *-- PieceRenderLayout : renders
+    
+    CLI ..> Core_Engine_Component : invokes rules
+    CLI ..> Models_Config_Component : uses data types
+    BlokusGui ..> Core_Engine_Component : validates moves via
+    BlokusGui ..> Models_Config_Component : visualizes
