@@ -254,7 +254,7 @@ class DuoCrossLayerIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(rejected.returncode, 1)
             self.assertIn(
-                "Opening move for red must cover start corner (9, 9).",
+                "First move coordinates must be the start corner (9, 9), got (8, 8).",
                 rejected.stdout,
             )
             self.assertEqual(after_path.read_text(encoding="utf-8"), after_text)
