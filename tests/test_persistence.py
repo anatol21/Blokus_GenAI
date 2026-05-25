@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from typing import Any
+from typing import Any, cast
 
 from blokus.engine import (
     apply_move,
@@ -498,7 +498,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
     def test_missing_mode_field_raises(self) -> None:
         """A JSON object missing the 'mode' key raises a clear error."""
 
-        payload = {"board": [], "players": []}
+        payload: dict[str, Any] = {"board": [], "players": []}
         with self.assertRaises((KeyError, ValueError)):
             GameState.from_dict(payload)
 
@@ -506,7 +506,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
         """Board with wrong number of rows is rejected."""
 
         state = new_game(mode="classic")
-        payload = state.to_dict()
+        payload = cast(dict[str, Any], state.to_dict())
         payload["board"] = payload["board"][:10]
         with self.assertRaises(ValueError):
             GameState.from_dict(payload)
@@ -515,7 +515,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
         """Board with a row of wrong length is rejected."""
 
         state = new_game(mode="classic")
-        payload = state.to_dict()
+        payload = cast(dict[str, Any], state.to_dict())
         rows = payload["board"]
         rows[5] = rows[5][:10]
         with self.assertRaises(ValueError):
@@ -525,7 +525,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
         """Missing remaining_pieces field raises."""
 
         state = new_game(mode="classic")
-        payload = state.to_dict()
+        payload = cast(dict[str, Any], state.to_dict())
         del payload["remaining_pieces"]
         with self.assertRaises(ValueError):
             GameState.from_dict(payload)
@@ -534,7 +534,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
         """Unknown extra fields in the JSON do not cause errors."""
 
         state = new_game(mode="classic")
-        payload = state.to_dict()
+        payload = cast(dict[str, Any], state.to_dict())
         payload["extra_field"] = "should be ignored"
         payload["another_extra"] = 42
 
@@ -545,7 +545,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
         """Optional fields that are missing get sensible defaults."""
 
         state = new_game(mode="classic")
-        payload: dict[str, Any] = state.to_dict()
+        payload = cast(dict[str, Any], state.to_dict())
         del payload["consecutive_passes"]
         del payload["finished"]
         del payload["history"]

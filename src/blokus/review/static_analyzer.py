@@ -833,7 +833,7 @@ def _build_tool_batches(
     current_cost = prefix_cost
 
     for changed_file in changed_files:
-        if changed_file.status == "D":
+        if getattr(changed_file, "status", None) == "D":
             continue
         safe_path = _safe_tool_path(changed_file.path)
         path_cost = len(safe_path) + 1
