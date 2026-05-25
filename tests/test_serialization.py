@@ -16,8 +16,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def board_occupied_cells(state: GameState):
-    """Derive occupied cells by scanning the board (not cache-backed helpers)."""
-
     expected_all = {
         (x, y)
         for y, row in enumerate(state.board)
@@ -37,105 +35,124 @@ def board_occupied_cells(state: GameState):
 
 
 class SerializationTests(unittest.TestCase):
-    def load_initial_payload(self) -> dict[str, object]:
-        fixture_path = REPO_ROOT / "fixtures" / "states" / "classic_initial.json"
+    def load_initial_payload(self, mode: str = "classic") -> dict[str, object]:
+        name = "classic_initial" if mode == "classic" else "duo_initial_state"
+        fixture_path = REPO_ROOT / "fixtures" / "states" / f"{name}.json"
         with fixture_path.open("r", encoding="utf-8") as handle:
             return json.load(handle)
 
     def test_initial_fixture_round_trips(self) -> None:
-        payload = self.load_initial_payload()
-        state = GameState.from_dict(payload)
-        self.assertEqual(state.to_dict(), payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                payload = self.load_initial_payload(mode)
+                state = GameState.from_dict(payload)
+                self.assertEqual(state.to_dict(), payload)
 
     def test_state_to_dict_excludes_occupied_cells_by_player(self) -> None:
-        state = new_game()
-        payload = state.to_dict()
-        self.assertNotIn("occupied_cells_by_player", payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                payload = state.to_dict()
+                self.assertNotIn("occupied_cells_by_player", payload)
 
-        # Deserialization should not require derived cache fields.
-        reloaded = GameState.from_dict(payload)
-        self.assertEqual(set(reloaded.occupied_cells_by_player.keys()), set(reloaded.players))
+                reloaded = GameState.from_dict(payload)
+                self.assertEqual(set(reloaded.occupied_cells_by_player.keys()), set(reloaded.players))
 
     def test_state_round_trip_after_moves(self) -> None:
-        state = new_game(
-            controllers={"blue": "computer", "yellow": "human", "red": "human", "green": "human"},
-            strategies={"blue": "default", "yellow": "default", "red": "default", "green": "default"},
-        )
-        for move in (
-            Move("blue", "I1", 0, 0),
-            Move("yellow", "I1", 19, 0),
-            Move("red", "I1", 19, 19),
-            Move("green", "I1", 0, 19),
-            Move("blue", "I2", 1, 1),
-        ):
-            state = apply_move(state, move)
-        reloaded = GameState.from_dict(state.to_dict())
-        self.assertEqual(reloaded.to_dict(), state.to_dict())
-        self.assertEqual(reloaded.controller_types["blue"], "computer")
-        self.assertEqual(reloaded.controller_strategies["blue"], "default")
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                players = new_game(mode=mode).players
+                controllers = {player: "computer" if i == 0 else "human" for i, player in enumerate(players)}
+                state = new_game(
+                    mode=mode,
+                    controllers=controllers,
+                    strategies={player: "default" for player in controllers},
+                )
+                for player in state.players:
+                    state = apply_move(state, Move(player, "I1", *state.start_corners[player]))
+                if mode == "classic":
+                    state = apply_move(state, Move("blue", "I2", 1, 1))
+                else:
+                    state = apply_move(state, Move("blue", "I2", 3, 5, rotation=1))
+
+                reloaded = GameState.from_dict(state.to_dict())
+                self.assertEqual(reloaded.to_dict(), state.to_dict())
+                first_player = list(controllers.keys())[0]
+                self.assertEqual(reloaded.controller_types[first_player], "computer")
+                self.assertEqual(reloaded.controller_strategies[first_player], "default")
 
     def test_round_tripped_state_rebuilds_occupied_cells_cache_from_board(self) -> None:
-        state = new_game()
-        for move in (
-            Move("blue", "I1", 0, 0),
-            Move("yellow", "I1", 19, 0),
-            Move("red", "I1", 19, 19),
-            Move("green", "I1", 0, 19),
-            Move("blue", "I2", 1, 1),
-        ):
-            state = apply_move(state, move)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                for player in state.players:
+                    state = apply_move(state, Move(player, "I1", *state.start_corners[player]))
 
-        reloaded = GameState.from_dict(state.to_dict())
-        expected_all, expected_by_player = board_occupied_cells(reloaded)
+                reloaded = GameState.from_dict(state.to_dict())
+                expected_all, expected_by_player = board_occupied_cells(reloaded)
 
-        for player in reloaded.players:
-            self.assertEqual(reloaded.occupied_cells_by_player[player], expected_by_player[player])
-            self.assertEqual(get_occupied_cells(reloaded, player), expected_by_player[player])
+                for player in reloaded.players:
+                    self.assertEqual(reloaded.occupied_cells_by_player[player], expected_by_player[player])
+                    self.assertEqual(get_occupied_cells(reloaded, player), expected_by_player[player])
 
-        self.assertEqual(get_occupied_cells(reloaded), expected_all)
+                self.assertEqual(get_occupied_cells(reloaded), expected_all)
 
     def test_invalid_board_symbol_is_rejected(self) -> None:
-        payload = self.load_initial_payload()
-        board = cast(list[str], payload["board"])
-        board[0] = "Q" + board[0][1:]
-        with self.assertRaisesRegex(ValueError, "No player configured for board symbol"):
-            GameState.from_dict(payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                payload = self.load_initial_payload(mode)
+                board = cast(list[str], payload["board"])
+                board[0] = "Q" + board[0][1:]
+                with self.assertRaisesRegex(ValueError, "No player configured for board symbol"):
+                    GameState.from_dict(payload)
 
     def test_board_player_missing_from_players_is_rejected(self) -> None:
-        payload = self.load_initial_payload()
-
-        # 'O' maps to player 'orange' which is not in classic mode's player list.
-        board = cast(list[str], payload["board"])
-        board[0] = "O" + board[0][1:]
-
-        with self.assertRaisesRegex(ValueError, "Board contains player 'orange'"):
-            GameState.from_dict(payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                payload = self.load_initial_payload(mode)
+                board = cast(list[str], payload["board"])
+                board[0] = "O" + board[0][1:]
+                with self.assertRaisesRegex(ValueError, "Board contains player 'orange'"):
+                    GameState.from_dict(payload)
 
     def test_mismatched_player_list_is_rejected(self) -> None:
-        payload = self.load_initial_payload()
+        payload = self.load_initial_payload("classic")
         payload["players"] = ["blue", "yellow"]
         with self.assertRaisesRegex(ValueError, "do not match mode"):
             GameState.from_dict(payload)
 
+        payload_duo = self.load_initial_payload("duo")
+        payload_duo["players"] = ["blue", "yellow", "red", "green"]
+        with self.assertRaisesRegex(ValueError, "do not match mode"):
+            GameState.from_dict(payload_duo)
+
     def test_invalid_current_player_is_rejected(self) -> None:
-        payload = self.load_initial_payload()
-        payload["current_player"] = "orange"
-        with self.assertRaisesRegex(ValueError, "is not part of the mode player order"):
-            GameState.from_dict(payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                payload = self.load_initial_payload(mode)
+                payload["current_player"] = "orange"
+                with self.assertRaisesRegex(ValueError, "is not part of the mode player order"):
+                    GameState.from_dict(payload)
 
     def test_unknown_remaining_piece_is_rejected(self) -> None:
-        payload = self.load_initial_payload()
-        remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
-        remaining_pieces["blue"][0] = "BAD"
-        with self.assertRaisesRegex(ValueError, "contain unknown ids"):
-            GameState.from_dict(payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                payload = self.load_initial_payload(mode)
+                remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
+                first_player = list(remaining_pieces.keys())[0]
+                remaining_pieces[first_player][0] = "BAD"
+                with self.assertRaisesRegex(ValueError, "contain unknown ids"):
+                    GameState.from_dict(payload)
 
     def test_duplicate_remaining_piece_is_rejected(self) -> None:
-        payload = self.load_initial_payload()
-        remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
-        remaining_pieces["blue"] = ["I1", "I1"]
-        with self.assertRaisesRegex(ValueError, "contain duplicates"):
-            GameState.from_dict(payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                payload = self.load_initial_payload(mode)
+                remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
+                first_player = list(remaining_pieces.keys())[0]
+                remaining_pieces[first_player] = ["I1", "I1"]
+                with self.assertRaisesRegex(ValueError, "contain duplicates"):
+                    GameState.from_dict(payload)
 
     def test_agentic_review_payload_matches_schema_shape(self) -> None:
         schema_path = REPO_ROOT / "schemas" / "agentic_review_output.schema.json"
@@ -217,16 +234,29 @@ class PersistenceTests(unittest.TestCase):
             text=True,
             check=False,
         )
-    
+
     def test_duo_state_export_import_round_trip(self) -> None:
-        """Export and reimport a Duo game state via CLI."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir) / "duo_test.json"
-
-            # Create a fresh Duo game
             result = self.run_cli("new", "--mode", "duo", "--output", str(temp_path))
             self.assertEqual(result.returncode, 0)
-            # ... rest of test implementation would go here ...
-        
+
+            with temp_path.open("r", encoding="utf-8") as f:
+                exported = json.load(f)
+            reloaded = GameState.from_dict(exported)
+            self.assertEqual(reloaded.to_dict(), exported)
+
+    def test_classic_state_export_import_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir) / "classic_test.json"
+            result = self.run_cli("new", "--mode", "classic", "--output", str(temp_path))
+            self.assertEqual(result.returncode, 0)
+
+            with temp_path.open("r", encoding="utf-8") as f:
+                exported = json.load(f)
+            reloaded = GameState.from_dict(exported)
+            self.assertEqual(reloaded.to_dict(), exported)
+
+
 if __name__ == "__main__":
     unittest.main()
