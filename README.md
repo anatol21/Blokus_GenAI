@@ -43,6 +43,7 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 
 - Evidence: `docs/evidence-log.md`.
 - AI usage disclosure: `docs/ai-usage.md`.
+- Engine and gameplay guide: `docs/engine-gameplay.md`.
 - Phase 3 policy and autonomy boundary: `docs/AGENT_POLICY.md`.
 - Team GitHub CI/CD guide: `docs/GITHUB_CICD_GUIDE.md`.
 - Release contents and policy: `docs/RELEASE_CONTENTS.md`, `docs/RELEASE_POLICY.md`.
@@ -107,5 +108,6 @@ python -m blokus show --state /tmp/classic.json
 ## Additional notes
 
 - Rule-source notes: `docs/rule-sources.md`
+- Engine and gameplay guide: `docs/engine-gameplay.md`
 - GUI manual checklist: `docs/gui_manual.md`
 - Legacy reviewing files (`TOPIC-REVIEWING_*.md`) are retained; canonical review package now lives in `docs/review-*.md`.
