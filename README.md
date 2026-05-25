@@ -40,13 +40,14 @@ Plain-Python Blokus project repository for course delivery. Phase 1 targets Clas
 - Ownership: `OWNERSHIP.md`.
 - Team/report snapshot: `TEAM_SUMMARY.md`.
 - Phase 1 governance setup: `docs/phase1-governance.md`.
-
 - Evidence: `docs/evidence-log.md`.
 - AI usage disclosure: `docs/ai-usage.md`.
 - Engine and gameplay guide: `docs/engine-gameplay.md`.
 - Phase 3 policy and autonomy boundary: `docs/AGENT_POLICY.md`.
 - Team GitHub CI/CD guide: `docs/GITHUB_CICD_GUIDE.md`.
 - Release contents and policy: `docs/RELEASE_CONTENTS.md`, `docs/RELEASE_POLICY.md`.
+- GitHub-deployed Review Agent guide: `docs/review-agent.md`.
+
 ## Quick start (plain Python)
 
 ```bash
