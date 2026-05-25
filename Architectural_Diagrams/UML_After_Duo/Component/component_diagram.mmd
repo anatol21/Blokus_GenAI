@@ -1,0 +1,60 @@
+classDiagram
+    %% Component 1: Models_and_Config
+    class Models_and_Config {
+        <<component>>
+        +models.py
+        +config.py
+        +pieces.py
+    }
+
+    class IDataInterface {
+        <<interface>>
+        +GameState
+        +Move
+        +ModeConfig
+        +PIECES
+    }
+    Models_and_Config ..|> IDataInterface : provides
+
+    %% Component 2: Core_Engine
+    class Core_Engine {
+        <<component>>
+        +engine.py
+        +players.py
+    }
+
+    class EngineAPI {
+        <<interface>>
+        +new_game()
+        +apply_move()
+        +list_legal_moves()
+    }
+    Core_Engine ..|> EngineAPI : provides
+    Core_Engine ..> IDataInterface : uses
+
+    %% Component 3: Presentation_GUI
+    class Presentation_GUI {
+        <<component>>
+        +gui.py
+        +gui_support.py
+        +render.py
+    }
+
+    class ILauncherAPI {
+        <<interface>>
+        +launch_gui()
+    }
+    Presentation_GUI ..|> ILauncherAPI : provides
+    Presentation_GUI ..> IDataInterface : requires (render state)
+    Presentation_GUI ..> EngineAPI : invokes (validate/submit moves)
+
+    %% Component 4: Orchestration_CLI
+    class Orchestration_CLI {
+        <<component>>
+        +cli.py
+        +automation.py
+    }
+    
+    Orchestration_CLI ..> IDataInterface : requires (parse JSON)
+    Orchestration_CLI ..> EngineAPI : requires (initialize logic)
+    Orchestration_CLI ..> ILauncherAPI : invokes (launch window)
