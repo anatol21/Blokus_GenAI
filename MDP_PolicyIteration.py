@@ -32,32 +32,23 @@ transition_prob = {
 # - Larger piece: +3
 # - Smaller piece: -1
 
-def calculate_reward(state, action):
-    opponent_piece_size = int(state.split("_")[1][0])  # Extract size from state
-    your_piece_size = int(action.split("_")[1][0])  # Extract size from action
 
-    if your_piece_size == opponent_piece_size:
-        return 2
-    elif your_piece_size > opponent_piece_size:
-        return 3
-    else:
-        return -1
     
 reward = {
     "OpponentPlayed_1Block": {
-        "Place_1BlockPiece": (calculate_reward),
-        "Place_2BlockPiece": (calculate_reward),
-        "Place_3BlockPiece": (calculate_reward) 
+        "Place_1BlockPiece": 1,
+        "Place_2BlockPiece": 2,
+        "Place_3BlockPiece": 3
     },
     "OpponentPlayed_2Block": {
-        "Place_1BlockPiece": (calculate_reward),
-        "Place_2BlockPiece": (calculate_reward),
-        "Place_3BlockPiece": (calculate_reward)
+        "Place_1BlockPiece": -1,
+        "Place_2BlockPiece": 2,
+        "Place_3BlockPiece": 3
     },
     "OpponentPlayed_3Block": {
-        "Place_1BlockPiece": (calculate_reward),
-        "Place_2BlockPiece": (calculate_reward),
-        "Place_3BlockPiece": (calculate_reward)
+        "Place_1BlockPiece": -1,
+        "Place_2BlockPiece": 2,
+        "Place_3BlockPiece": 3
     }
 }
 
@@ -116,5 +107,5 @@ while True:
     policy = new_policy
 
     entrada = input("\nPress ENTER to iterate again or type 'salir' to exit: ")
-    if entrada.lower() == "salir":
+    if entrada.lower() == "exit":
         break
