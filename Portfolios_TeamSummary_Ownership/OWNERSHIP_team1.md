@@ -7,10 +7,12 @@
 
 ## Team Information
 
-**Team Name:** `[Your Team Name/ID]`  
+**Team Name:** `Team 1 - Review`  
 **Project:** Blokus Game Engine (Classic + Duo)  
-**Date:** `[Last Updated Date]`  
-**Team Members:** `[Student Name 1, Student Name 2, Student Name 3, ...]`
+**Team Members:** 
+- Maximilian Alp Grueder
+- Anatole Lobenko 
+- Nicolas Zevallo
 
 ---
 
