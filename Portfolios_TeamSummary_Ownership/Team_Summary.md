@@ -7,7 +7,7 @@
 
 ## Team Information
 
-**Team Name:** `Review`  
+**Team Name:** `Team 1 - Review`  
 **Project:** Blokus Game Engine (Classic + Duo)  
 **Team Members:** 
 - Maximilian Alp Grueder
