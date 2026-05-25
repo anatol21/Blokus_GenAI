@@ -154,6 +154,41 @@ class SerializationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "contain duplicates"):
                     GameState.from_dict(payload)
 
+    def test_load_rejects_played_piece_readded_to_remaining_pieces(self) -> None:
+        state = apply_move(new_game(), Move("blue", "I1", 0, 0))
+        payload = state.to_dict()
+        remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
+        remaining_pieces["blue"].append("I1")
+
+        with self.assertRaisesRegex(ValueError, "already appears in history"):
+            GameState.from_dict(payload)
+
+    def test_history_unknown_player_is_rejected(self) -> None:
+        payload = self.load_initial_payload()
+        payload["history"] = [Move("orange", "I1", 0, 0).to_dict()]
+
+        with self.assertRaisesRegex(ValueError, "unknown player"):
+            GameState.from_dict(payload)
+
+    def test_history_unknown_piece_is_rejected(self) -> None:
+        payload = self.load_initial_payload()
+        payload["history"] = [Move("blue", "BAD", 0, 0).to_dict()]
+
+        with self.assertRaisesRegex(ValueError, "unknown piece"):
+            GameState.from_dict(payload)
+
+    def test_history_duplicate_piece_for_player_is_rejected(self) -> None:
+        payload = self.load_initial_payload()
+        remaining_pieces = cast(dict[str, list[str]], payload["remaining_pieces"])
+        remaining_pieces["blue"].remove("I1")
+        payload["history"] = [
+            Move("blue", "I1", 0, 0).to_dict(),
+            Move("blue", "I1", 1, 1).to_dict(),
+        ]
+
+        with self.assertRaisesRegex(ValueError, "already appears in history"):
+            GameState.from_dict(payload)
+
     def test_agentic_review_payload_matches_schema_shape(self) -> None:
         schema_path = REPO_ROOT / "schemas" / "agentic_review_output.schema.json"
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
