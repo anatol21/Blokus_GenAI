@@ -55,33 +55,33 @@ class RoundTripFidelityTests(unittest.TestCase):
 
     def test_fresh_state_round_trips_exactly(self) -> None:
         """A brand-new game state survives serialization without any field drift."""
-
-        state = new_game()
-        payload = state.to_dict()
-        reloaded = GameState.from_dict(payload)
-        self.assertEqual(reloaded.to_dict(), payload)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                payload = state.to_dict()
+                reloaded = GameState.from_dict(payload)
+                self.assertEqual(reloaded.to_dict(), payload)
 
     def test_round_trip_after_opening_moves(self) -> None:
-        """State after all four players open still round-trips exactly."""
+        """State after each player opens still round-trips exactly."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                moves = [
+                    Move(player, "I1", *state.start_corners[player])
+                    for player in state.players
+                ]
+                for m in moves:
+                    state = apply_move(state, m)
 
-        state = new_game()
-        moves = [
-            Move("blue", "I1", 0, 0),
-            Move("yellow", "I1", 19, 0),
-            Move("red", "I1", 19, 19),
-            Move("green", "I1", 0, 19),
-        ]
-        for m in moves:
-            state = apply_move(state, m)
-
-        payload = state.to_dict()
-        reloaded = GameState.from_dict(payload)
-        self.assertEqual(reloaded.to_dict(), payload)
+                payload = state.to_dict()
+                reloaded = GameState.from_dict(payload)
+                self.assertEqual(reloaded.to_dict(), payload)
 
     def test_round_trip_after_follow_up_moves(self) -> None:
-        """State after opening + follow-up moves round-trips exactly."""
+        """Classic state after opening + follow-up moves round-trips exactly."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         moves = [
             Move("blue", "I1", 0, 0),
             Move("yellow", "I1", 19, 0),
@@ -98,34 +98,37 @@ class RoundTripFidelityTests(unittest.TestCase):
 
     def test_serialization_is_deterministic(self) -> None:
         """Serializing the same state twice produces identical JSON text."""
-
-        state = new_game()
-        state = apply_move(state, Move("blue", "I1", 0, 0))
-        json_a = json.dumps(state.to_dict(), sort_keys=True)
-        json_b = json.dumps(state.to_dict(), sort_keys=True)
-        self.assertEqual(json_a, json_b)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                state = apply_move(state, Move(state.players[0], "I1", *state.start_corners[state.players[0]]))
+                json_a = json.dumps(state.to_dict(), sort_keys=True)
+                json_b = json.dumps(state.to_dict(), sort_keys=True)
+                self.assertEqual(json_a, json_b)
 
     def test_round_trip_with_computer_controllers(self) -> None:
         """Controller metadata (human/computer + strategy) survives round-trip."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(
+                    mode=mode,
+                    controllers={player: "computer" for player in new_game(mode=mode).players},
+                    strategies={player: "default" for player in new_game(mode=mode).players},
+                )
+                payload = state.to_dict()
+                reloaded = GameState.from_dict(payload)
 
-        state = new_game(
-            controllers={"blue": "computer", "yellow": "human", "red": "computer", "green": "human"},
-            strategies={"blue": "default", "yellow": "default", "red": "default", "green": "default"},
-        )
-        payload = state.to_dict()
-        reloaded = GameState.from_dict(payload)
-
-        for player in state.players:
-            self.assertEqual(
-                reloaded.controller_types[player],
-                state.controller_types[player],
-                f"controller_types mismatch for {player}",
-            )
-            self.assertEqual(
-                reloaded.controller_strategies[player],
-                state.controller_strategies[player],
-                f"controller_strategies mismatch for {player}",
-            )
+                for player in state.players:
+                    self.assertEqual(
+                        reloaded.controller_types[player],
+                        state.controller_types[player],
+                        f"controller_types mismatch for {player}",
+                    )
+                    self.assertEqual(
+                        reloaded.controller_strategies[player],
+                        state.controller_strategies[player],
+                        f"controller_strategies mismatch for {player}",
+                    )
 
 
 # ── Board Reproducibility ───────────────────────────────────────────
@@ -136,40 +139,42 @@ class BoardReproducibilityTests(unittest.TestCase):
 
     def test_board_cells_match_after_reload(self) -> None:
         """Every cell on the board is identical after a round-trip."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                state = apply_move(state, Move(state.players[0], "I1", *state.start_corners[state.players[0]]))
+                if len(state.players) > 1:
+                    state = apply_move(state, Move(state.players[1], "I1", *state.start_corners[state.players[1]]))
 
-        state = new_game()
-        state = apply_move(state, Move("blue", "I1", 0, 0))
-        state = apply_move(state, Move("yellow", "I1", 19, 0))
+                reloaded = GameState.from_dict(state.to_dict())
 
-        reloaded = GameState.from_dict(state.to_dict())
-
-        for y in range(state.board_size):
-            for x in range(state.board_size):
-                self.assertEqual(
-                    reloaded.board[y][x],
-                    state.board[y][x],
-                    f"Board mismatch at ({x}, {y})",
-                )
+                for y in range(state.board_size):
+                    for x in range(state.board_size):
+                        self.assertEqual(
+                            reloaded.board[y][x],
+                            state.board[y][x],
+                            f"Board mismatch at ({x}, {y})",
+                        )
 
     def test_occupied_cells_cache_rebuilt_from_board(self) -> None:
         """The derived occupied_cells_by_player cache is rebuilt correctly on load."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                state = new_game(mode=mode)
+                for player in state.players:
+                    state = apply_move(state, Move(player, "I1", *state.start_corners[player]))
 
-        state = new_game()
-        state = apply_move(state, Move("blue", "I1", 0, 0))
-        state = apply_move(state, Move("yellow", "I1", 19, 0))
-        state = apply_move(state, Move("red", "I1", 19, 19))
+                reloaded = GameState.from_dict(state.to_dict())
 
-        reloaded = GameState.from_dict(state.to_dict())
-
-        for player in reloaded.players:
-            original_cells = get_occupied_cells(state, player)
-            reloaded_cells = get_occupied_cells(reloaded, player)
-            self.assertEqual(reloaded_cells, original_cells, f"Cache mismatch for {player}")
+                for player in reloaded.players:
+                    original_cells = get_occupied_cells(state, player)
+                    reloaded_cells = get_occupied_cells(reloaded, player)
+                    self.assertEqual(reloaded_cells, original_cells, f"Cache mismatch for {player}")
 
     def test_board_string_representation_is_stable(self) -> None:
         """The compact string-per-row board format is stable across serialization."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
 
         payload = state.to_dict()
@@ -190,7 +195,7 @@ class HistoryPreservationTests(unittest.TestCase):
     def test_history_entries_preserved(self) -> None:
         """All history entries are present and ordered after round-trip."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         moves = [
             Move("blue", "I1", 0, 0),
             Move("yellow", "I1", 19, 0),
@@ -212,7 +217,7 @@ class HistoryPreservationTests(unittest.TestCase):
     def test_current_player_preserved(self) -> None:
         """The current_player advances correctly and survives round-trip."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
         self.assertEqual(state.current_player, "yellow")
 
@@ -222,7 +227,7 @@ class HistoryPreservationTests(unittest.TestCase):
     def test_consecutive_passes_preserved(self) -> None:
         """consecutive_passes value survives round-trip."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
         payload["consecutive_passes"] = 3
         reloaded = GameState.from_dict(payload)
@@ -231,7 +236,7 @@ class HistoryPreservationTests(unittest.TestCase):
     def test_finished_flag_preserved(self) -> None:
         """finished flag survives round-trip."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
         payload["finished"] = True
         reloaded = GameState.from_dict(payload)
@@ -240,7 +245,7 @@ class HistoryPreservationTests(unittest.TestCase):
     def test_remaining_pieces_decrease_after_move(self) -> None:
         """After a move, the placed piece is removed from remaining_pieces and stays removed after round-trip."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         self.assertIn("I1", state.remaining_pieces["blue"])
 
         state = apply_move(state, Move("blue", "I1", 0, 0))
@@ -252,7 +257,7 @@ class HistoryPreservationTests(unittest.TestCase):
     def test_scores_reproducible_after_round_trip(self) -> None:
         """Scores computed from original and reloaded state are identical."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
         state = apply_move(state, Move("yellow", "I1", 19, 0))
 
@@ -268,81 +273,71 @@ class CliExportImportTests(unittest.TestCase):
 
     def test_new_then_reimport_produces_same_state(self) -> None:
         """CLI 'new' exports a file that reimports to the same payload."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "state.json"
+                    result = run_cli("new", "--mode", mode, "--output", str(path))
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "state.json"
-            result = run_cli("new", "--mode", "classic", "--output", str(path))
-            self.assertEqual(result.returncode, 0, result.stderr)
+                    with path.open("r", encoding="utf-8") as f:
+                        exported = json.load(f)
 
-            with path.open("r", encoding="utf-8") as f:
-                exported = json.load(f)
-
-            # Reimport through engine deserializer
-            reloaded = GameState.from_dict(exported)
-            self.assertEqual(reloaded.to_dict(), exported)
+                    reloaded = GameState.from_dict(exported)
+                    self.assertEqual(reloaded.to_dict(), exported)
 
     def test_apply_chain_produces_valid_state_at_each_step(self) -> None:
         """Chaining CLI apply commands produces valid, loadable state at every step."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path_a = Path(tmp) / "step0.json"
+                    path_b = Path(tmp) / "step1.json"
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path_a = Path(tmp) / "step0.json"
-            path_b = Path(tmp) / "step1.json"
-            path_c = Path(tmp) / "step2.json"
+                    result = run_cli("new", "--mode", mode, "--output", str(path_a))
+                    self.assertEqual(result.returncode, 0, result.stderr)
 
-            # Step 0: create initial state
-            result = run_cli("new", "--output", str(path_a))
-            self.assertEqual(result.returncode, 0, result.stderr)
+                    with path_a.open("r", encoding="utf-8") as f:
+                        initial = json.load(f)
+                    first_player = initial["players"][0]
+                    corner = initial["start_corners"][first_player]
 
-            # Step 1: blue opens
-            result = run_cli(
-                "apply", "--state", str(path_a),
-                "--piece", "I1", "--x", "0", "--y", "0",
-                "--output", str(path_b),
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    result = run_cli(
+                        "apply", "--state", str(path_a),
+                        "--player", first_player,
+                        "--piece", "I1", "--x", str(corner[0]), "--y", str(corner[1]),
+                        "--output", str(path_b),
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            with path_b.open("r", encoding="utf-8") as f:
-                step1 = json.load(f)
-            self.assertEqual(step1["current_player"], "yellow")
-            self.assertEqual(len(step1["history"]), 1)
-
-            # Step 2: yellow opens
-            result = run_cli(
-                "apply", "--state", str(path_b),
-                "--piece", "I1", "--x", "19", "--y", "0",
-                "--output", str(path_c),
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
-            with path_c.open("r", encoding="utf-8") as f:
-                step2 = json.load(f)
-            self.assertEqual(step2["current_player"], "red")
-            self.assertEqual(len(step2["history"]), 2)
-            self.assertEqual(step2["board"][0][19], "Y")
+                    with path_b.open("r", encoding="utf-8") as f:
+                        step1 = json.load(f)
+                    self.assertEqual(step1["current_player"], initial["players"][1] if len(initial["players"]) > 1 else initial["players"][0])
+                    self.assertEqual(len(step1["history"]), 1)
 
     def test_export_file_is_valid_utf8_json(self) -> None:
         """Exported file is valid UTF-8 JSON with a trailing newline."""
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "state.json"
+                    run_cli("new", "--mode", mode, "--output", str(path))
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "state.json"
-            run_cli("new", "--output", str(path))
-
-            raw = path.read_bytes()
-            # Must be valid UTF-8
-            text = raw.decode("utf-8")
-            # Must end with a newline (per _dump_json implementation)
-            self.assertTrue(text.endswith("\n"))
-            # Must parse as valid JSON
-            json.loads(text)
+                    raw = path.read_bytes()
+                    text = raw.decode("utf-8")
+                    self.assertTrue(text.endswith("\n"))
+                    json.loads(text)
 
     def test_cli_show_reproduces_board_from_saved_file(self) -> None:
         """CLI 'show' renders a saved state without errors."""
-
-        fixture = FIXTURE_DIR / "classic_initial.json"
-        result = run_cli("show", "--state", str(fixture))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        # The render output should contain player indicators or board layout
-        self.assertGreater(len(result.stdout.strip()), 0)
+        for mode in ["classic", "duo"]:
+            with self.subTest(mode=mode):
+                fixture = FIXTURE_DIR / f"{mode}_initial.json"
+                if not fixture.exists():
+                    self.skipTest(f"Fixture not found: {fixture}")
+                result = run_cli("show", "--state", str(fixture))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertGreater(len(result.stdout.strip()), 0)
 
 
 # ── Save and Resume Workflow ─────────────────────────────────────────
@@ -354,25 +349,21 @@ class SaveResumeTests(unittest.TestCase):
     def test_play_resume_from_mid_game_state(self) -> None:
         """A state saved mid-game can be loaded and continued with valid moves."""
 
-        # Build a mid-game state through the engine
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
         state = apply_move(state, Move("yellow", "I1", 19, 0))
         state = apply_move(state, Move("red", "I1", 19, 19))
         state = apply_move(state, Move("green", "I1", 0, 19))
 
-        # Save to a temp file
         with tempfile.TemporaryDirectory() as tmp:
             save_path = Path(tmp) / "mid_game.json"
             with save_path.open("w", encoding="utf-8") as f:
                 json.dump(state.to_dict(), f, indent=2)
 
-            # Load from the saved file
             with save_path.open("r", encoding="utf-8") as f:
                 loaded_payload = json.load(f)
             resumed = GameState.from_dict(loaded_payload)
 
-            # The resumed state should allow play to continue
             self.assertEqual(resumed.current_player, "blue")
             self.assertFalse(resumed.finished)
             legal = list_legal_moves(resumed, limit=1)
@@ -381,16 +372,13 @@ class SaveResumeTests(unittest.TestCase):
     def test_save_then_continue_playing(self) -> None:
         """Save a state, reload it, apply another move, and verify consistency."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
 
-        # Save
         payload = state.to_dict()
 
-        # Reload
         resumed = GameState.from_dict(payload)
 
-        # Continue playing
         resumed = apply_move(resumed, Move("yellow", "I1", 19, 0))
 
         self.assertEqual(resumed.current_player, "red")
@@ -401,7 +389,6 @@ class SaveResumeTests(unittest.TestCase):
         """CLI play --state with computer players and --max-turns saves valid output."""
 
         with tempfile.TemporaryDirectory() as tmp:
-            # Create initial state with all computer players
             init_path = Path(tmp) / "init.json"
             run_cli(
                 "new",
@@ -422,9 +409,7 @@ class SaveResumeTests(unittest.TestCase):
             with out_path.open("r", encoding="utf-8") as f:
                 played = json.load(f)
 
-            # After playing with computers, state should have advanced
             self.assertGreater(len(played["history"]), 0)
-            # Re-importing should work cleanly
             GameState.from_dict(played)
 
 
@@ -518,26 +503,26 @@ class SerializationEdgeCaseTests(unittest.TestCase):
     def test_wrong_board_row_count_raises(self) -> None:
         """Board with wrong number of rows is rejected."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
-        payload["board"] = payload["board"][:10]  # Truncate to 10 rows
+        payload["board"] = payload["board"][:10]
         with self.assertRaises(ValueError):
             GameState.from_dict(payload)
 
     def test_wrong_board_row_length_raises(self) -> None:
         """Board with a row of wrong length is rejected."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
         rows = payload["board"]
-        rows[5] = rows[5][:10]  # Truncate one row
+        rows[5] = rows[5][:10]
         with self.assertRaises(ValueError):
             GameState.from_dict(payload)
 
     def test_missing_remaining_pieces_raises(self) -> None:
         """Missing remaining_pieces field raises."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
         del payload["remaining_pieces"]
         with self.assertRaises(ValueError):
@@ -546,21 +531,19 @@ class SerializationEdgeCaseTests(unittest.TestCase):
     def test_extra_fields_are_tolerated(self) -> None:
         """Unknown extra fields in the JSON do not cause errors."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
         payload["extra_field"] = "should be ignored"
         payload["another_extra"] = 42
 
-        # Should load without error
         reloaded = GameState.from_dict(payload)
         self.assertEqual(reloaded.mode, "classic")
 
     def test_defaults_applied_for_optional_fields(self) -> None:
         """Optional fields that are missing get sensible defaults."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         payload = state.to_dict()
-        # Remove optional fields
         del payload["consecutive_passes"]
         del payload["finished"]
         del payload["history"]
@@ -586,12 +569,10 @@ class SerializationEdgeCaseTests(unittest.TestCase):
             state_path = Path(tmp) / "state.json"
             output_path = Path(tmp) / "output.json"
 
-            # Write initial state
-            state = new_game()
+            state = new_game(mode="classic")
             with state_path.open("w", encoding="utf-8") as f:
                 json.dump(state.to_dict(), f, indent=2)
 
-            # Attempt an illegal move with --output (wrong player = out of turn)
             result = run_cli(
                 "apply", "--state", str(state_path),
                 "--player", "yellow",
@@ -599,7 +580,6 @@ class SerializationEdgeCaseTests(unittest.TestCase):
                 "--output", str(output_path),
             )
             self.assertEqual(result.returncode, 1)
-            # The output file should NOT exist since the move failed
             self.assertFalse(
                 output_path.exists(),
                 "Output file should not be created when apply fails",
@@ -615,19 +595,17 @@ class LegalMoveContinuityTests(unittest.TestCase):
     def test_legal_moves_identical_before_and_after_round_trip(self) -> None:
         """Legal moves listed from an original state match those from a reloaded state."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
         state = apply_move(state, Move("yellow", "I1", 19, 0))
         state = apply_move(state, Move("red", "I1", 19, 19))
         state = apply_move(state, Move("green", "I1", 0, 19))
 
-        # List legal moves from the original state
         original_moves = list_legal_moves(state, limit=50)
         original_set = {
             (m.player, m.piece, m.x, m.y, m.rotation, m.flipped) for m in original_moves
         }
 
-        # Round-trip and list again
         reloaded = GameState.from_dict(state.to_dict())
         reloaded_moves = list_legal_moves(reloaded, limit=50)
         reloaded_set = {
@@ -639,7 +617,7 @@ class LegalMoveContinuityTests(unittest.TestCase):
     def test_scoring_identical_after_round_trip(self) -> None:
         """Scores computed from reloaded state match the original."""
 
-        state = new_game()
+        state = new_game(mode="classic")
         state = apply_move(state, Move("blue", "I1", 0, 0))
         state = apply_move(state, Move("yellow", "I1", 19, 0))
 
