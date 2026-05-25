@@ -61,9 +61,8 @@ class SerializationTests(unittest.TestCase):
     def test_state_round_trip_after_moves(self) -> None:
         for mode in ["classic", "duo"]:
             with self.subTest(mode=mode):
-                controllers = {player: "human" for player in new_game(mode=mode).players}
-                controllers[controllers.pop(next(p for p in controllers))] = "computer"
-                controllers = {p: "computer" if i == 0 else "human" for i, p in enumerate(controllers)}
+                players = new_game(mode=mode).players
+                controllers = {player: "computer" if i == 0 else "human" for i, player in enumerate(players)}
                 state = new_game(
                     mode=mode,
                     controllers=controllers,

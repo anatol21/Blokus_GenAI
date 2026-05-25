@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import Any
 
 from blokus.engine import (
     apply_move,
@@ -110,10 +111,11 @@ class RoundTripFidelityTests(unittest.TestCase):
         """Controller metadata (human/computer + strategy) survives round-trip."""
         for mode in ["classic", "duo"]:
             with self.subTest(mode=mode):
+                players = new_game(mode=mode).players
                 state = new_game(
                     mode=mode,
-                    controllers={player: "computer" for player in new_game(mode=mode).players},
-                    strategies={player: "default" for player in new_game(mode=mode).players},
+                    controllers={player: "computer" for player in players},
+                    strategies={player: "default" for player in players},
                 )
                 payload = state.to_dict()
                 reloaded = GameState.from_dict(payload)
@@ -543,7 +545,7 @@ class SerializationEdgeCaseTests(unittest.TestCase):
         """Optional fields that are missing get sensible defaults."""
 
         state = new_game(mode="classic")
-        payload = state.to_dict()
+        payload: dict[str, Any] = state.to_dict()
         del payload["consecutive_passes"]
         del payload["finished"]
         del payload["history"]
