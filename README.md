@@ -2,6 +2,8 @@
 
 Plain-Python Blokus project repository for course delivery. Phase 1 targets Classic as a stable baseline. Phase 2 extends the same engine to Duo through mode configuration. Phase 3 adds structured issue intake, PR intelligence, and bounded branch-level agent repair. Phase 4 adds release-candidate packaging and protected-environment delivery gates. Phase 5 hardens the pipeline with tighter workflow security, provenance, and governance review.
 
+Import and export functionalities are only possible through the CLI. 
+
 ## Project purpose
 
 - Implement a configurable Blokus engine in plain Python.
@@ -66,6 +68,27 @@ Optional run paths:
 Without a virtual environment, commands also work with `PYTHONPATH=src`.
 
 ## CLI examples
+
+Start a new game on CLI without AI:
+```bash
+python -m blokus play --mode classic
+```
+
+Start a new game with GUI:
+```bash
+python -m blokus play GUI
+```
+
+Start a new game on CLI with 3 computer players (change --mode to duo for duo):
+```bash
+python -m blokus play --mode classic --players human,computer,computer,computer
+```
+
+Start a new game on CLI with 3 computer players (change --mode to duo for duo):
+```bash
+python -m blokus play --mode classic --players human,computer,computer,computer
+```
+
 
 Create a new state:
 
