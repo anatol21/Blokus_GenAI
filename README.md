@@ -84,9 +84,9 @@ Start a new game on CLI with 3 computer players (change --mode to duo for duo):
 python -m blokus play --mode classic --players human,computer,computer,computer
 ```
 
-Start a new game on CLI with 3 computer players (change --mode to duo for duo):
+Guide on setting up the GUI on Windows:
 ```bash
-python -m blokus play --mode classic --players human,computer,computer,computer
+Windows_GUI_Setup_and_Debugging_Guide.md
 ```
 
 
