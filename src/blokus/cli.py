@@ -15,6 +15,8 @@ from blokus.players import choose_move
 from blokus.render import render_state
 
 
+
+
 def _load_state(path: str) -> GameState:
     """Load a serialized game state from JSON."""
 
@@ -158,8 +160,6 @@ def cmd_validate(args: Namespace) -> int:
 
 
 def cmd_apply(args: Namespace) -> int:
-    """Apply one legal move to a saved state and emit the new state."""
-
     state = _load_state(args.state)
     move = _move_from_args(state, args)
     result = validate_move(state, move)
@@ -170,6 +170,8 @@ def cmd_apply(args: Namespace) -> int:
     _dump_json(new_state.to_dict(), args.output)
     return 0
 
+
+ 
 
 def cmd_pass_turn(args: Namespace) -> int:
     """Apply a legal pass for the current player."""
